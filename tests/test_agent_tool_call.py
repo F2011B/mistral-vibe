@@ -304,6 +304,34 @@ async def test_tool_call_with_invalid_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repeated_tool_calls_are_blocked() -> None:
+    backend = FakeBackend([
+        mock_llm_chunk(
+            content="First check.", tool_calls=[make_todo_tool_call("call_1")]
+        ),
+        mock_llm_chunk(
+            content="Second check.", tool_calls=[make_todo_tool_call("call_2")]
+        ),
+        mock_llm_chunk(
+            content="Third check.", tool_calls=[make_todo_tool_call("call_3")]
+        ),
+        mock_llm_chunk(content="Done.", finish_reason="stop"),
+    ])
+    agent = make_agent(auto_approve=True, backend=backend)
+
+    events = await act_and_collect_events(agent, "Loop guard?")
+
+    loop_errors = [
+        e
+        for e in events
+        if isinstance(e, ToolResultEvent) and e.error and "repeatedly" in e.error
+    ]
+    assert len(loop_errors) == 1
+    assert agent.stats.tool_calls_succeeded == 2
+    assert agent.stats.tool_calls_failed == 1
+
+
+@pytest.mark.asyncio
 async def test_tool_call_with_duplicate_todo_ids() -> None:
     duplicate_todos = [
         TodoItem(id="duplicate", content="Task 1"),
