@@ -148,6 +148,14 @@ class BashToolConfig(BaseToolConfig):
         default_factory=_get_default_denylist_standalone,
         description="Commands that are denied only when run without arguments",
     )
+    sandbox_prefix: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional command prefix to run bash inside a sandbox "
+            "(e.g., ['bwrap', '--unshare-net', '--ro-bind', '/', '/']). "
+            "If set, commands execute as: <prefix> bash -lc '<command>'."
+        ),
+    )
 
 
 class BashArgs(BaseModel):
@@ -237,15 +245,27 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
                 {} if is_windows() else {"start_new_session": True}
             )
 
-            proc = await asyncio.create_subprocess_shell(
-                args.command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.DEVNULL,
-                cwd=self.config.effective_workdir,
-                env=_get_base_env(),
-                **kwargs,
-            )
+            if self.config.sandbox_prefix:
+                cmd = [*self.config.sandbox_prefix, "bash", "-lc", args.command]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=self.config.effective_workdir,
+                    env=_get_base_env(),
+                    **kwargs,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    args.command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=self.config.effective_workdir,
+                    env=_get_base_env(),
+                    **kwargs,
+                )
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(

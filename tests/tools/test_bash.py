@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from vibe.core.tools.base import BaseToolState, ToolError, ToolPermission
 from vibe.core.tools.builtins.bash import Bash, BashArgs, BashToolConfig
+from vibe.core.utils import is_windows
 
 
 @pytest.fixture
@@ -84,3 +87,16 @@ def test_check_allowlist_denylist():
     assert denylisted is ToolPermission.NEVER
     assert mixed is None
     assert empty is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(is_windows(), reason="Sandbox prefix test uses bash semantics")
+async def test_sandbox_prefix_wraps_command(tmp_path: Path) -> None:
+    config = BashToolConfig(
+        workdir=tmp_path, sandbox_prefix=["env", "SANDBOX=1"]
+    )
+    bash_tool = Bash(config=config, state=BaseToolState())
+
+    result = await bash_tool.run(BashArgs(command="printf $SANDBOX"))
+
+    assert result.stdout.strip() == "1"
