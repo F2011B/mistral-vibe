@@ -1,4 +1,5 @@
 [project]
+# Note: PyPI name is mistral-vibe; package import is vibe.
 name = "mistral-vibe"
 version = "1.1.2"
 description = "Minimal CLI coding agent by Mistral"
@@ -60,7 +61,10 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-include = ["vibe/"]
+packages = ["vibe"]
+
+[tool.hatch.build.targets.editable]
+packages = ["vibe"]
 
 
 [project.scripts]
