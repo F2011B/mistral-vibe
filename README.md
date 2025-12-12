@@ -47,6 +47,15 @@ Then, use uv command below.
 uv tool install mistral-vibe
 ```
 
+#### Developer install (editable)
+
+If you want to hack on Vibe, install in editable mode with uv:
+
+```bash
+uv pip install -e .
+uv run vibe --help
+```
+
 ### Using pip
 
 ```bash
