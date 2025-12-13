@@ -4,6 +4,8 @@ import asyncio
 import os
 import re
 from typing import ClassVar, final
+from shlex import quote
+import sys
 
 from pydantic import BaseModel, Field
 
@@ -44,6 +46,20 @@ class BashToolConfig(BaseToolConfig):
     denylist_standalone: list[str] = Field(
         default_factory=get_default_denylist_standalone,
         description="Commands that are denied only when run without arguments",
+    )
+    use_git_bash_env: bool = Field(
+        default=False,
+        description="When on Windows, run commands inside Git Bash to reuse sourced envs.",
+    )
+    git_bash_path: str = Field(
+        default=r"C:\Program Files\Git\bin\bash.exe",
+        description="Path to Git Bash executable on Windows.",
+    )
+    git_bash_prelude: str | None = Field(
+        default=None,
+        description=(
+            "Optional script to source before running commands (e.g., ./setup.sh)."
+        ),
     )
 
 
@@ -131,15 +147,36 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
         try:
             proc_kwargs = get_subprocess_kwargs()
 
-            proc = await asyncio.create_subprocess_shell(
-                args.command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                stdin=asyncio.subprocess.DEVNULL,
-                cwd=self.config.effective_workdir,
-                env=get_base_env(),
-                **proc_kwargs,
-            )
+            env = get_base_env()
+            cwd = self.config.effective_workdir
+
+            if os.name == "nt" and self.config.use_git_bash_env:
+                full_command = args.command
+                if self.config.git_bash_prelude:
+                    prelude = quote(self.config.git_bash_prelude)
+                    full_command = f"source {prelude} && {args.command}"
+
+                proc = await asyncio.create_subprocess_exec(
+                    self.config.git_bash_path,
+                    "-lc",
+                    full_command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=cwd,
+                    env=env,
+                    **proc_kwargs,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    args.command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=cwd,
+                    env=env,
+                    **proc_kwargs,
+                )
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
