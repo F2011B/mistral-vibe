@@ -49,7 +49,6 @@ from vibe.core.types import (
     LLMChunk,
     LLMMessage,
     LLMUsage,
-    ReasoningEvent,
     Role,
     SyncApprovalCallback,
     ToolCallEvent,
@@ -332,35 +331,31 @@ class Agent:
         async for event in self._handle_tool_calls(resolved):
             yield event
 
-<<<<<<< HEAD
-    async def _stream_assistant_events(
-        self,
-    ) -> AsyncGenerator[AssistantEvent | ReasoningEvent]:
-=======
     def _create_assistant_event(
-        self, content: str, chunk: LLMChunk | None
+        self, content: str, chunk: LLMChunk | None, reasoning_content: str | None
     ) -> AssistantEvent:
-        final_content = content or EMPTY_RESPONSE_FALLBACK
-        return AssistantEvent(content=final_content)
+        if not content and not reasoning_content:
+            content = EMPTY_RESPONSE_FALLBACK
+        return AssistantEvent(content=content, reasoning_content=reasoning_content)
 
     async def _stream_assistant_events(self) -> AsyncGenerator[AssistantEvent]:
-        chunks: list[LLMChunk] = []
->>>>>>> b8fedb1 (Notify when LLM response body is empty)
         content_buffer = ""
         reasoning_buffer = ""
-        chunks_with_content = 0
-        chunks_with_reasoning = 0
+        chunks_with_payload = 0
         BATCH_SIZE = 5
         output_index = 0
 
-        async def _emit_assistant_output(content: str) -> AssistantEvent:
+        async def _emit_assistant_output(
+            content: str, reasoning_content: str | None, chunk: LLMChunk | None = None
+        ) -> AssistantEvent:
             nonlocal output_index
             output_index += 1
-            event = AssistantEvent(content=content)
+            event = self._create_assistant_event(content, chunk, reasoning_content)
             await self.interaction_logger.log_event(
                 "assistant_output",
                 {
                     "content": event.content,
+                    "reasoning_content": event.reasoning_content,
                     "streaming": True,
                     "chunk_index": output_index,
                 },
@@ -368,72 +363,78 @@ class Agent:
             return event
 
         async for chunk in self._chat_streaming():
-            if chunk.message.reasoning_content:
-                if content_buffer:
-                    event = await _emit_assistant_output(content_buffer)
+            chunk_has_payload = False
+
+            if chunk.message.tool_calls and chunk.finish_reason is None:
+                if chunk.message.content:
+                    content_buffer += chunk.message.content
+                    chunk_has_payload = True
+                if chunk.message.reasoning_content:
+                    reasoning_buffer += chunk.message.reasoning_content
+                    chunk_has_payload = True
+
+                if chunk_has_payload:
+                    event = await _emit_assistant_output(
+                        content_buffer, reasoning_buffer or None, chunk
+                    )
                     yield event
                     content_buffer = ""
-                    chunks_with_content = 0
-
-                reasoning_buffer += chunk.message.reasoning_content
-                chunks_with_reasoning += 1
-
-                if chunks_with_reasoning >= BATCH_SIZE:
-                    yield ReasoningEvent(content=reasoning_buffer)
                     reasoning_buffer = ""
-                    chunks_with_reasoning = 0
-
+                    chunks_with_payload = 0
+                continue
             if chunk.message.content:
-                if reasoning_buffer:
-                    yield ReasoningEvent(content=reasoning_buffer)
-                    reasoning_buffer = ""
-                    chunks_with_reasoning = 0
-
                 content_buffer += chunk.message.content
-                chunks_with_content += 1
-                if chunks_with_content >= BATCH_SIZE:
-                    event = await _emit_assistant_output(content_buffer)
+                chunk_has_payload = True
+
+            if chunk.message.reasoning_content:
+                reasoning_buffer += chunk.message.reasoning_content
+                chunk_has_payload = True
+
+            if chunk_has_payload:
+                chunks_with_payload += 1
+
+            if chunks_with_payload >= BATCH_SIZE:
+                if content_buffer or reasoning_buffer:
+                    event = await _emit_assistant_output(
+                        content_buffer, reasoning_buffer or None, chunk
+                    )
                     yield event
                     content_buffer = ""
-                    chunks_with_content = 0
+                    reasoning_buffer = ""
+                    chunks_with_payload = 0
 
-        if reasoning_buffer:
-            yield ReasoningEvent(content=reasoning_buffer)
-
-        if content_buffer:
-            event = await _emit_assistant_output(content_buffer)
+        if content_buffer or reasoning_buffer:
+            event = await _emit_assistant_output(
+                content_buffer, reasoning_buffer or None
+            )
             yield event
 
-        # Empty response handling
-        if output_index == 0 and not reasoning_buffer:
-             event = AssistantEvent(content=EMPTY_RESPONSE_FALLBACK)
-             await self.interaction_logger.log_event(
-                "assistant_output",
-                {
-                    "content": event.content,
-                    "streaming": True,
-                    "chunk_index": 1,
-                },
-            )
-             yield event
+        if output_index == 0:
+            event = await _emit_assistant_output(EMPTY_RESPONSE_FALLBACK, None)
+            yield event
 
     async def _get_assistant_event(self) -> AssistantEvent:
         llm_result = await self._chat()
         if llm_result.usage is None:
-             raise LLMResponseError(
+            raise LLMResponseError(
                 "Usage data missing in non-streaming completion response"
             )
 
-        content = llm_result.message.content or ""
-        if not content:
+        assistant_msg = llm_result.message
+        content = assistant_msg.content or ""
+        if not content and not assistant_msg.reasoning_content:
             content = EMPTY_RESPONSE_FALLBACK
-            llm_result.message.content = content
+            assistant_msg.content = content
 
-        event = AssistantEvent(content=content)
+        event = AssistantEvent(
+            content=content,
+            reasoning_content=assistant_msg.reasoning_content,
+        )
         await self.interaction_logger.log_event(
             "assistant_output",
             {
                 "content": event.content,
+                "reasoning_content": event.reasoning_content,
                 "streaming": False,
                 "stopped_by_middleware": event.stopped_by_middleware,
             },

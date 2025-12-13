@@ -60,12 +60,21 @@ class UserMessage(Static):
 
 
 class StreamingMessageBase(Static):
-    def __init__(self, content: str) -> None:
+    def __init__(
+        self,
+        content: str,
+        reasoning_content: str | None = None,
+        show_reasoning: bool = False,
+    ) -> None:
         super().__init__()
         self._content = content
+        self._reasoning_content = reasoning_content or ""
+        self._show_reasoning = show_reasoning
         self._markdown: Markdown | None = None
         self._stream: MarkdownStream | None = None
-
+        self._reasoning_markdown: Markdown | None = None
+        self._reasoning_stream: MarkdownStream | None = None
+        self._reasoning_container: Vertical | None = None
     def _get_markdown(self) -> Markdown:
         if self._markdown is None:
             raise RuntimeError(
@@ -78,6 +87,30 @@ class StreamingMessageBase(Static):
             self._stream = Markdown.get_stream(self._get_markdown())
         return self._stream
 
+    def _get_reasoning_markdown(self) -> Markdown:
+        if self._reasoning_markdown is None:
+            self._reasoning_markdown = self.query_one(
+                ".assistant-reasoning-markdown", Markdown
+            )
+        return self._reasoning_markdown
+
+    def _ensure_reasoning_stream(self) -> MarkdownStream:
+        if self._reasoning_stream is None:
+            self._reasoning_stream = Markdown.get_stream(
+                self._get_reasoning_markdown()
+            )
+        return self._reasoning_stream
+
+    def _show_reasoning_container(self) -> None:
+        if self._reasoning_container is None:
+            self._reasoning_container = self.query_one(
+                ".assistant-reasoning-container", Vertical
+            )
+        if self._reasoning_container:
+            self._reasoning_container.display = (
+                self._show_reasoning and bool(self._reasoning_content)
+            )
+
     async def append_content(self, content: str) -> None:
         if not content:
             return
@@ -87,25 +120,61 @@ class StreamingMessageBase(Static):
             stream = self._ensure_stream()
             await stream.write(content)
 
+    async def append_reasoning(self, content: str) -> None:
+        if not content:
+            return
+
+        self._reasoning_content += content
+        self._show_reasoning_container()
+        stream = self._ensure_reasoning_stream()
+        await stream.write(content)
+
+    @property
+    def content_chunk(self) -> str:
+        return self._content
+
+    @property
+    def reasoning_chunk(self) -> str:
+        return self._reasoning_content
+
     async def write_initial_content(self) -> None:
         if self._content and self._should_write_content():
             stream = self._ensure_stream()
             await stream.write(self._content)
+        if self._reasoning_content:
+            self._show_reasoning_container()
+            stream = self._ensure_reasoning_stream()
+            await stream.write(self._reasoning_content)
 
     async def stop_stream(self) -> None:
-        if self._stream is None:
+        if self._stream is not None:
+            await self._stream.stop()
+            self._stream = None
+        if self._reasoning_stream is not None:
+            await self._reasoning_stream.stop()
+            self._reasoning_stream = None
+
+    def set_show_reasoning(self, show: bool) -> None:
+        if self._show_reasoning == show:
             return
 
-        await self._stream.stop()
-        self._stream = None
+        self._show_reasoning = show
+        self._show_reasoning_container()
 
     def _should_write_content(self) -> bool:
         return True
 
 
 class AssistantMessage(StreamingMessageBase):
-    def __init__(self, content: str) -> None:
-        super().__init__(content)
+    def __init__(
+        self,
+        content: str,
+        reasoning_content: str | None = None,
+        show_reasoning: bool = False,
+    ) -> None:
+        super().__init__(
+            content, reasoning_content=reasoning_content, show_reasoning=show_reasoning
+        )
         self.add_class("assistant-message")
 
     def compose(self) -> ComposeResult:
@@ -115,6 +184,15 @@ class AssistantMessage(StreamingMessageBase):
                 markdown = Markdown("")
                 self._markdown = markdown
                 yield markdown
+                reasoning_container = Vertical(classes="assistant-reasoning-container")
+                reasoning_container.display = False
+                with reasoning_container:
+                    reasoning_markdown = Markdown(
+                        "", classes="assistant-reasoning-markdown"
+                    )
+                    self._reasoning_markdown = reasoning_markdown
+                    yield reasoning_markdown
+                yield reasoning_container
 
 
 class ReasoningMessage(SpinnerMixin, StreamingMessageBase):

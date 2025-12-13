@@ -77,6 +77,13 @@ class ConfigApp(Container):
                 "options": themes,
                 "value": self.config.textual_theme,
             },
+            {
+                "key": "show_reasoning",
+                "label": "Reasoning",
+                "type": "cycle",
+                "options": ["hidden", "visible"],
+                "value": "visible" if self.config.show_reasoning else "hidden",
+            },
         ]
 
         self.title_widget: Static | None = None
