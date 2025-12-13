@@ -64,6 +64,8 @@ from vibe.core.utils import (
     is_user_cancellation_event,
 )
 
+EMPTY_RESPONSE_FALLBACK = "(No response content)"
+
 
 class ToolExecutionResponse(StrEnum):
     SKIP = auto()
@@ -330,9 +332,20 @@ class Agent:
         async for event in self._handle_tool_calls(resolved):
             yield event
 
+<<<<<<< HEAD
     async def _stream_assistant_events(
         self,
     ) -> AsyncGenerator[AssistantEvent | ReasoningEvent]:
+=======
+    def _create_assistant_event(
+        self, content: str, chunk: LLMChunk | None
+    ) -> AssistantEvent:
+        final_content = content or EMPTY_RESPONSE_FALLBACK
+        return AssistantEvent(content=final_content)
+
+    async def _stream_assistant_events(self) -> AsyncGenerator[AssistantEvent]:
+        chunks: list[LLMChunk] = []
+>>>>>>> b8fedb1 (Notify when LLM response body is empty)
         content_buffer = ""
         reasoning_buffer = ""
         chunks_with_content = 0
@@ -391,9 +404,32 @@ class Agent:
             event = await _emit_assistant_output(content_buffer)
             yield event
 
+        # Empty response handling
+        if output_index == 0 and not reasoning_buffer:
+             event = AssistantEvent(content=EMPTY_RESPONSE_FALLBACK)
+             await self.interaction_logger.log_event(
+                "assistant_output",
+                {
+                    "content": event.content,
+                    "streaming": True,
+                    "chunk_index": 1,
+                },
+            )
+             yield event
+
     async def _get_assistant_event(self) -> AssistantEvent:
         llm_result = await self._chat()
-        event = AssistantEvent(content=llm_result.message.content or "")
+        if llm_result.usage is None:
+             raise LLMResponseError(
+                "Usage data missing in non-streaming completion response"
+            )
+
+        content = llm_result.message.content or ""
+        if not content:
+            content = EMPTY_RESPONSE_FALLBACK
+            llm_result.message.content = content
+
+        event = AssistantEvent(content=content)
         await self.interaction_logger.log_event(
             "assistant_output",
             {
