@@ -716,6 +716,12 @@ class VibeApp(App):
             UserCommandMessage(f"Model '{model.alias}' saved for {model.provider}.")
         )
 
+    async def _show_provider_wizard(self) -> None:
+        await self.action_add_provider()
+
+    async def _show_model_wizard(self) -> None:
+        await self.action_add_model()
+
     async def _clear_history(self) -> None:
         if self.agent is None:
             await self._mount_and_scroll(

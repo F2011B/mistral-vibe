@@ -51,6 +51,16 @@ class CommandRegistry:
                 description="Compact conversation history by summarizing",
                 handler="_compact_history",
             ),
+            "provider": Command(
+                aliases=frozenset(["/provider", "/add-provider", "/provider-add"]),
+                description="Open wizard to add a provider and its models",
+                handler="_show_provider_wizard",
+            ),
+            "model": Command(
+                aliases=frozenset(["/model", "/add-model", "/model-add"]),
+                description="Open wizard to add a single model",
+                handler="_show_model_wizard",
+            ),
             "exit": Command(
                 aliases=frozenset(["/exit", "/quit", "/q"]),
                 description="Exit the application",
