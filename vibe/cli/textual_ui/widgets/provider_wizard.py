@@ -36,8 +36,8 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
     DEFAULT_TEMP = "0.2"
     DEFAULT_PRICE = "0.0"
     BINDINGS = [
-        Binding("escape", "dismiss_modal", "Close", show=False),
-        Binding("ctrl+c", "dismiss_modal", "Close", show=False),
+        Binding("escape", "dismiss_modal", "Close", show=False, priority=True),
+        Binding("ctrl+c", "dismiss_modal", "Close", show=False, priority=True),
     ]
 
     def __init__(
@@ -94,7 +94,10 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
                 yield Button("Save Model", id="save-model", variant="success")
 
     def on_mount(self) -> None:
-        self.name_input.focus()
+        self.call_after_refresh(self.name_input.focus)
+
+    def on_show(self) -> None:
+        self.call_after_refresh(self.name_input.focus)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
@@ -156,8 +159,8 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
     """Wizard to collect a provider and any associated models."""
 
     BINDINGS = [
-        Binding("escape", "dismiss_modal", "Close", show=False),
-        Binding("ctrl+c", "dismiss_modal", "Close", show=False),
+        Binding("escape", "dismiss_modal", "Close", show=False, priority=True),
+        Binding("ctrl+c", "dismiss_modal", "Close", show=False, priority=True),
     ]
 
     class Submitted(Message):
@@ -212,7 +215,10 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
                 yield Button("Cancel", id="cancel-provider", variant="error")
 
     def on_mount(self) -> None:
-        self.name_input.focus()
+        self.call_after_refresh(self.name_input.focus)
+
+    def on_show(self) -> None:
+        self.call_after_refresh(self.name_input.focus)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
