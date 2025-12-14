@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 from typing import Any, ClassVar, assert_never
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
@@ -1232,6 +1233,15 @@ class VibeApp(App):
             chat.anchor()
         except Exception:
             pass
+
+    def on_mouse_scroll(self, event: events.MouseScroll) -> None:
+        """Let users override auto-scroll when they manually scroll."""
+        try:
+            chat = self.query_one("#chat", VerticalScroll)
+        except Exception:
+            return
+
+        self._auto_scroll = self._is_scrolled_to_bottom(chat)
 
     def _schedule_update_notification(self) -> None:
         if (
