@@ -62,6 +62,7 @@ from vibe.core.utils import (
     CancellationReason,
     get_user_cancellation_message,
     is_dangerous_directory,
+    is_windows,
     logger,
 )
 
@@ -300,10 +301,17 @@ class VibeApp(App):
         if save_permanently:
             VibeConfig.save_updates({"tools": {tool_name: {"permission": "always"}}})
 
-        if tool_name not in self.config.tools:
-            self.config.tools[tool_name] = BaseToolConfig()
+        current = self.config.tools.get(tool_name)
+        if isinstance(current, BaseToolConfig):
+            cfg = current
+        elif isinstance(current, dict):
+            cfg = BaseToolConfig.model_validate(current)
+            self.config.tools[tool_name] = cfg
+        else:
+            cfg = BaseToolConfig()
+            self.config.tools[tool_name] = cfg
 
-        self.config.tools[tool_name].permission = ToolPermission.ALWAYS
+        cfg.permission = ToolPermission.ALWAYS
 
     def _save_config_changes(self, changes: dict[str, str]) -> None:
         if not changes:
