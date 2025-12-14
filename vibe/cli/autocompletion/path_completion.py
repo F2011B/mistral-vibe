@@ -8,7 +8,8 @@ from textual import events
 from vibe.cli.autocompletion.base import CompletionResult, CompletionView
 from vibe.core.autocompletion.completers import DEFAULT_TARGET_MATCHES, PathCompleter
 
-MAX_SUGGESTIONS_COUNT = DEFAULT_TARGET_MATCHES
+# Cap UI suggestions to a small, stable count regardless of completer search depth.
+MAX_SUGGESTIONS_COUNT = min(10, DEFAULT_TARGET_MATCHES)
 
 
 class PathCompletionController:

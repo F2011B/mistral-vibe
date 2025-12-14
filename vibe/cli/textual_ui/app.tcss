@@ -200,7 +200,7 @@ Markdown MarkdownFence {
     margin-top: 1;
     padding: 1;
     background: $surface;
-    border: solid $foreground-muted 1px;
+    border: solid $foreground-muted;
 }
 
 .assistant-reasoning-label {

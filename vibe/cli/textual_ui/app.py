@@ -617,7 +617,7 @@ class VibeApp(App):
             new_config = VibeConfig.load()
 
             if self.agent:
-            await self.agent.reload_with_initial_messages(config=new_config)
+                await self.agent.reload_with_initial_messages(config=new_config)
 
             self.config = new_config
             if self._context_progress:
