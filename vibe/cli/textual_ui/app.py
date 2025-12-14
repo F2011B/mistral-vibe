@@ -56,6 +56,7 @@ from vibe.core.config import ModelConfig, VibeConfig
 from vibe.core.config_path import HISTORY_FILE
 from vibe.core.tools.base import BaseToolConfig, ToolPermission
 from vibe.core.types import ApprovalResponse, LLMMessage, ResumeSessionInfo, Role
+from vibe.core.tools.builtins.bash import BashToolConfig
 from vibe.core.utils import (
     CancellationReason,
     get_user_cancellation_message,
@@ -336,15 +337,6 @@ class VibeApp(App):
         return False
 
     async def _configure_windows_shell(self) -> None:
-        if not is_windows():
-            await self._mount_and_scroll(
-                ErrorMessage(
-                    "Windows shell setup is only available on Windows.",
-                    collapsed=self._tools_collapsed,
-                )
-            )
-            return
-
         candidate_paths = [
             Path(r"C:\Program Files\Git\bin\bash.exe"),
             Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
@@ -364,16 +356,20 @@ class VibeApp(App):
             )
             return
 
+        current_bash_config = self.config.tools.get("bash")
+        default_allowlist = BashToolConfig().allowlist
+        existing_allowlist = (
+            current_bash_config.allowlist
+            if current_bash_config and hasattr(current_bash_config, "allowlist")
+            else default_allowlist
+        )
+        allowlist = list({*existing_allowlist, "grep"})
+
         bash_tool_updates: dict[str, object] = {
             "use_git_bash_env": True,
             "git_bash_path": str(discovered),
+            "allowlist": allowlist,
         }
-
-        current_allowlist = self.config.tools.get("bash", BaseToolConfig()).model_dump().get(
-            "allowlist", []
-        )
-        if "grep" not in current_allowlist:
-            bash_tool_updates["allowlist"] = [*current_allowlist, "grep"]
 
         VibeConfig.save_updates({"tools": {"bash": bash_tool_updates}})
         await self._reload_config()
