@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
@@ -87,6 +88,9 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
                 yield Button("Cancel", id="cancel-model", variant="error")
                 yield Button("Save Model", id="save-model", variant="success")
 
+    def on_mount(self) -> None:
+        self.name_input.focus()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
             case "cancel-model":
@@ -96,6 +100,10 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
                 if model is None:
                     return
                 self.dismiss(model)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
 
     def _build_model(self) -> ModelConfig | None:
         name = (self.name_input.value or "").strip()
@@ -190,6 +198,9 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
                 yield Button("Save Provider", id="save-provider", variant="success")
                 yield Button("Cancel", id="cancel-provider", variant="error")
 
+    def on_mount(self) -> None:
+        self.name_input.focus()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
             case "cancel-provider":
@@ -262,3 +273,7 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
             return None
 
         return ProviderDraft(provider=provider, models=list(self._models))
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
