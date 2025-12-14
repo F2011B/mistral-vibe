@@ -31,6 +31,11 @@ from vibe.cli.textual_ui.widgets.messages import (
 )
 from vibe.cli.textual_ui.widgets.mode_indicator import ModeIndicator
 from vibe.cli.textual_ui.widgets.path_display import PathDisplay
+from vibe.cli.textual_ui.widgets.provider_wizard import (
+    ModelWizard,
+    ProviderDraft,
+    ProviderWizard,
+)
 from vibe.cli.textual_ui.widgets.tools import ToolCallMessage, ToolResultMessage
 from vibe.cli.textual_ui.widgets.welcome import WelcomeBanner
 from vibe.cli.update_notifier import (
@@ -45,7 +50,7 @@ from vibe.cli.update_notifier import (
 from vibe.core import __version__ as CORE_VERSION
 from vibe.core.agent import Agent
 from vibe.core.autocompletion.path_prompt_adapter import render_path_prompt
-from vibe.core.config import VibeConfig
+from vibe.core.config import ModelConfig, VibeConfig
 from vibe.core.config_path import HISTORY_FILE
 from vibe.core.tools.base import BaseToolConfig, ToolPermission
 from vibe.core.types import ApprovalResponse, LLMMessage, ResumeSessionInfo, Role
@@ -73,6 +78,8 @@ class VibeApp(App):
         Binding("ctrl+o", "toggle_tool", "Toggle Tool", show=False),
         Binding("ctrl+t", "toggle_todo", "Toggle Todo", show=False),
         Binding("ctrl+r", "toggle_reasoning", "Toggle Reasoning", show=False),
+        Binding("ctrl+p", "add_provider", "Add Provider", show=False),
+        Binding("ctrl+m", "add_model", "Add Model", show=False),
         Binding("shift+tab", "cycle_mode", "Cycle Mode", show=False, priority=True),
         Binding("shift+up", "scroll_chat_up", "Scroll Up", show=False, priority=True),
         Binding(
@@ -642,6 +649,72 @@ class VibeApp(App):
                     f"Failed to reload config: {e}", collapsed=self._tools_collapsed
                 )
             )
+
+    async def action_add_provider(self) -> None:
+        draft = await self.push_screen_wait(ProviderWizard(self.config))
+        if draft is None:
+            return
+        await self._apply_provider_draft(draft)
+
+    async def action_add_model(self) -> None:
+        model = await self.push_screen_wait(
+            ModelWizard(
+                provider_name=self.config.get_active_model().provider
+                if self.config.models
+                else "",
+                provider_choices=[p.name for p in self.config.providers],
+            )
+        )
+        if model is None:
+            return
+        await self._apply_model(model)
+
+    async def _apply_provider_draft(self, draft: ProviderDraft) -> None:
+        provider = draft.provider
+        new_models = draft.models
+        provider_list = [
+            p for p in self.config.providers if p.name != provider.name
+        ] + [provider]
+
+        existing_models = [
+            m for m in self.config.models if m.alias not in {md.alias for md in new_models}
+        ]
+        combined_models = [*existing_models, *new_models]
+
+        VibeConfig.save_updates(
+            {
+                "providers": [
+                    p.model_dump(mode="python", exclude_none=True)
+                    for p in provider_list
+                ],
+                "models": [
+                    m.model_dump(mode="python", exclude_none=True)
+                    for m in combined_models
+                ],
+            }
+        )
+        await self._reload_config()
+        await self._mount_and_scroll(
+            UserCommandMessage(
+                f"Provider '{provider.name}' saved with {len(new_models)} model(s)."
+            )
+        )
+
+    async def _apply_model(self, model: ModelConfig) -> None:
+        kept_models = [m for m in self.config.models if m.alias != model.alias]
+        kept_models.append(model)
+        VibeConfig.save_updates(
+            {
+                "models": [
+                    m.model_dump(mode="python", exclude_none=True)
+                    for m in kept_models
+                ]
+            }
+        )
+        await self._reload_config()
+        await self._mount_and_scroll(
+            UserCommandMessage(f"Model '{model.alias}' saved for {model.provider}.")
+        )
 
     async def _clear_history(self) -> None:
         if self.agent is None:
