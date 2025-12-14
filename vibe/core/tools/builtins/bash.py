@@ -149,6 +149,14 @@ class BashToolConfig(BaseToolConfig):
         default_factory=_get_default_denylist_standalone,
         description="Commands that are denied only when run without arguments",
     )
+    sandbox_prefix: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional command prefix to run bash inside a sandbox "
+            "(e.g., ['bwrap', '--unshare-net', '--ro-bind', '/', '/']). "
+            "If set, commands execute as: <prefix> bash -lc '<command>'."
+        ),
+    )
     use_git_bash_env: bool = Field(
         default=False,
         description="When on Windows, run commands inside Git Bash to reuse sourced envs.",
@@ -270,6 +278,18 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
                     stdin=asyncio.subprocess.DEVNULL,
                     cwd=cwd,
                     env=env,
+                    **kwargs,
+                )
+            elif self.config.sandbox_prefix:
+                cmd = [*self.config.sandbox_prefix, "bash", "-lc", args.command]
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    cwd=cwd,
+                    env=env,
+                    **kwargs,
                 )
             else:
                 proc = await asyncio.create_subprocess_shell(
