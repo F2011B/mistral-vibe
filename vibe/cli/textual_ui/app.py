@@ -370,12 +370,16 @@ class VibeApp(App):
             "git_bash_path": str(discovered),
             "allowlist": allowlist,
         }
+        grep_updates: dict[str, object] = {
+            "use_git_bash_env": True,
+            "git_bash_path": str(discovered),
+        }
 
-        VibeConfig.save_updates({"tools": {"bash": bash_tool_updates}})
+        VibeConfig.save_updates({"tools": {"bash": bash_tool_updates, "grep": grep_updates}})
         await self._reload_config()
         await self._mount_and_scroll(
             UserCommandMessage(
-                f"Configured Git Bash at '{discovered}'. Bash tool now uses grep via Git Bash."
+                f"Configured Git Bash at '{discovered}'. Bash and grep tools will run through Git Bash."
             )
         )
 

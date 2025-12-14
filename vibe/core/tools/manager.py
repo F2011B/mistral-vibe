@@ -333,10 +333,16 @@ class ToolManager:
             default_config = BaseToolConfig()
 
         user_overrides = self._config.tools.get(tool_name)
-        if user_overrides is None:
-            merged_dict = default_config.model_dump()
+        if isinstance(user_overrides, BaseToolConfig):
+            user_dict = user_overrides.model_dump()
+        elif isinstance(user_overrides, dict):
+            user_dict = user_overrides
         else:
-            merged_dict = {**default_config.model_dump(), **user_overrides.model_dump()}
+            user_dict = None
+
+        merged_dict = default_config.model_dump()
+        if isinstance(user_dict, dict):
+            merged_dict.update(user_dict)
 
         if self._config.workdir is not None:
             merged_dict["workdir"] = self._config.workdir

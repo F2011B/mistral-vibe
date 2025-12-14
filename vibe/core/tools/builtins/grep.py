@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from enum import StrEnum, auto
+import shlex
 from pathlib import Path
 import shutil
 from typing import TYPE_CHECKING, ClassVar
@@ -70,6 +71,18 @@ class GrepToolConfig(BaseToolConfig):
         default=".vibeignore",
         description="Name of the file to read for additional exclusion patterns.",
     )
+    use_git_bash_env: bool = Field(
+        default=False,
+        description="When on Windows, run grep via Git Bash to reuse its environment.",
+    )
+    git_bash_path: str = Field(
+        default=r"C:\Program Files\Git\bin\bash.exe",
+        description="Path to Git Bash executable on Windows.",
+    )
+    git_bash_prelude: str | None = Field(
+        default=None,
+        description="Optional script to source before running commands (e.g., ./setup.sh).",
+    )
 
 
 class GrepState(BaseToolState):
@@ -114,8 +127,58 @@ class Grep(
             "Please install ripgrep: https://github.com/BurntSushi/ripgrep#installation"
         )
 
+    async def _detect_backend_git_bash(self) -> GrepBackend:
+        if not self.config.use_git_bash_env:
+            raise ToolError("Git Bash backend requested but not enabled.")
+
+        if await self._command_exists_in_git_bash("rg"):
+            return GrepBackend.RIPGREP
+        if await self._command_exists_in_git_bash("grep"):
+            return GrepBackend.GNU_GREP
+
+        raise ToolError(
+            "Neither ripgrep (rg) nor grep is installed in the configured Git Bash environment."
+        )
+
+    async def _select_backend(self) -> GrepBackend:
+        if self.config.use_git_bash_env:
+            return await self._detect_backend_git_bash()
+        return self._detect_backend()
+
+    def _git_bash_path(self) -> Path:
+        path = Path(self.config.git_bash_path).expanduser()
+        if not path.is_file():
+            raise ToolError(
+                f"Git Bash not found at {path}. Update git_bash_path or disable use_git_bash_env."
+            )
+        return path
+
+    async def _command_exists_in_git_bash(self, command: str) -> bool:
+        bash_path = self._git_bash_path()
+        quoted = shlex.quote(command)
+
+        proc = await asyncio.create_subprocess_exec(
+            str(bash_path),
+            "-lc",
+            f"command -v {quoted} >/dev/null 2>&1",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=str(self.config.effective_workdir),
+        )
+        await proc.wait()
+        return proc.returncode == 0
+
+    def _build_git_bash_command(self, cmd: list[str]) -> list[str]:
+        shell_command = shlex.join(cmd)
+        if self.config.git_bash_prelude:
+            prelude = shlex.quote(self.config.git_bash_prelude)
+            shell_command = f"source {prelude} && {shell_command}"
+
+        bash_path = self._git_bash_path()
+        return [str(bash_path), "-lc", shell_command]
+
     async def run(self, args: GrepArgs) -> GrepResult:
-        backend = self._detect_backend()
+        backend = await self._select_backend()
         self._validate_args(args)
         self.state.search_history.append(args.pattern)
 
@@ -216,8 +279,14 @@ class Grep(
 
     async def _execute_search(self, cmd: list[str]) -> str:
         try:
+            exec_cmd = (
+                self._build_git_bash_command(cmd)
+                if self.config.use_git_bash_env
+                else cmd
+            )
+
             proc = await asyncio.create_subprocess_exec(
-                *cmd,
+                *exec_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.config.effective_workdir),

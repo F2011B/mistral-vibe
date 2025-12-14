@@ -210,6 +210,42 @@ async def test_uses_effective_workdir(tmp_path):
     assert "test.py" in result.matches
 
 
+@pytest.mark.asyncio
+async def test_uses_git_bash_env_when_configured(tmp_path):
+    fake_bash = tmp_path / "fake_bash.sh"
+    fake_bash.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "cmd = ' '.join(sys.argv[2:]) if len(sys.argv) > 2 else ''",
+                "if 'command -v' in cmd and 'rg' in cmd:",
+                "    sys.exit(0)",
+                "if 'command -v' in cmd and 'grep' in cmd:",
+                "    sys.exit(1)",
+                "if 'rg' in cmd or 'grep' in cmd:",
+                "    print('fake.py:1:match')",
+                "    sys.exit(0)",
+                "sys.exit(0)",
+            ]
+        )
+    )
+    fake_bash.chmod(0o755)
+
+    (tmp_path / "fake.py").write_text("match\n")
+    config = GrepToolConfig(
+        workdir=tmp_path,
+        use_git_bash_env=True,
+        git_bash_path=str(fake_bash),
+    )
+    grep_tool = Grep(config=config, state=GrepState())
+
+    result = await grep_tool.run(GrepArgs(pattern="match"))
+
+    assert result.match_count == 1
+    assert "fake.py" in result.matches
+
+
 @pytest.mark.skipif(not shutil.which("grep"), reason="GNU grep not available")
 class TestGnuGrepBackend:
     @pytest.mark.asyncio

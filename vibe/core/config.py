@@ -302,7 +302,7 @@ class VibeConfig(BaseSettings):
 
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     session_logging: SessionLoggingConfig = Field(default_factory=SessionLoggingConfig)
-    tools: dict[str, BaseToolConfig] = Field(default_factory=dict)
+    tools: dict[str, BaseToolConfig | dict[str, Any]] = Field(default_factory=dict)
     tool_paths: list[str] = Field(
         default_factory=list,
         description=(
@@ -443,18 +443,16 @@ class VibeConfig(BaseSettings):
 
     @field_validator("tools", mode="before")
     @classmethod
-    def _normalize_tool_configs(cls, v: Any) -> dict[str, BaseToolConfig]:
+    def _normalize_tool_configs(cls, v: Any) -> dict[str, BaseToolConfig | dict[str, Any]]:
         if not isinstance(v, dict):
             return {}
 
-        normalized: dict[str, BaseToolConfig] = {}
+        normalized: dict[str, BaseToolConfig | dict[str, Any]] = {}
         for tool_name, tool_config in v.items():
             if isinstance(tool_config, BaseToolConfig):
                 normalized[tool_name] = tool_config
             elif isinstance(tool_config, dict):
-                normalized[tool_name] = BaseToolConfig.model_validate(tool_config)
-            else:
-                normalized[tool_name] = BaseToolConfig()
+                normalized[tool_name] = tool_config
 
         return normalized
 
