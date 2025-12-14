@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import os
 import re
 import signal
@@ -190,31 +191,31 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
     description: ClassVar[str] = "Run a one-off bash command and capture its output."
 
     def check_allowlist_denylist(self, args: BashArgs) -> ToolPermission | None:
-        command_parts = re.split(r"(?:&&|\|\||;|\|)", args.command)
-        command_parts = [part.strip() for part in command_parts if part.strip()]
-
-        if not command_parts:
+        if not (
+            command_parts := [
+                part.strip()
+                for part in re.split(r"(?:&&|\|\||;|\|)", args.command)
+                if part.strip()
+            ]
+        ):
             return None
 
         def is_denylisted(command: str) -> bool:
             return any(command.startswith(pattern) for pattern in self.config.denylist)
 
         def is_standalone_denylisted(command: str) -> bool:
-            parts = command.split()
-            if not parts:
+            if not (parts := command.split()):
+                return False
+
+            if len(parts) > 1:
                 return False
 
             base_command = parts[0]
-            has_args = len(parts) > 1
-
-            if not has_args:
-                command_name = os.path.basename(base_command)
-                if command_name in self.config.denylist_standalone:
-                    return True
-                if base_command in self.config.denylist_standalone:
-                    return True
-
-            return False
+            command_name = Path(base_command).name
+            return (
+                command_name in self.config.denylist_standalone
+                or base_command in self.config.denylist_standalone
+            )
 
         def is_allowlisted(command: str) -> bool:
             return any(command.startswith(pattern) for pattern in self.config.allowlist)
