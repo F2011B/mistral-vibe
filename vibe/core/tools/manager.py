@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import hashlib
 import importlib.util
 import inspect
 from logging import getLogger
@@ -10,7 +11,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from vibe import VIBE_ROOT
-from vibe.core.config_path import GLOBAL_TOOLS_DIR, resolve_local_tools_dir
+from vibe.core.config_path import CONFIG_DIR, GLOBAL_TOOLS_DIR, resolve_local_tools_dir
 from vibe.core.tools.base import BaseTool, BaseToolConfig
 from vibe.core.tools.mcp import (
     RemoteTool,
@@ -19,6 +20,7 @@ from vibe.core.tools.mcp import (
     list_tools_http,
     list_tools_stdio,
 )
+from vibe.core.tools.manifest import ToolManifest, ToolManifestEntry, _hash_file
 from vibe.core.utils import run_sync
 
 logger = getLogger("vibe")
@@ -45,10 +47,14 @@ class ToolManager:
         self._config = config
         self._instances: dict[str, BaseTool] = {}
         self._search_paths: list[Path] = self._compute_search_paths(config)
+        self._manifest = ToolManifest(
+            CONFIG_DIR.path / "cache" / "tools_manifest.json"
+        )
+        self._manifest.load()
+        self._tool_specs: dict[str, ToolManifestEntry] = {}
 
-        self._available: dict[str, type[BaseTool]] = {
-            cls.get_name(): cls for cls in self._iter_tool_classes(self._search_paths)
-        }
+        self._refresh_manifest()
+        self._available: dict[str, type[BaseTool]] = {}
         self._integrate_mcp()
 
     @staticmethod
@@ -77,19 +83,18 @@ class ToolManager:
 
     @staticmethod
     def _iter_tool_classes(search_paths: list[Path]) -> Iterator[type[BaseTool]]:
+        """Discovery fallback used when manifest is missing or stale."""
         for base in search_paths:
             if not base.is_dir():
                 continue
 
             for path in base.rglob("*.py"):
-                if not path.is_file():
-                    continue
-                name = path.name
-                if name.startswith("_"):
+                if not path.is_file() or path.name.startswith("_"):
                     continue
 
                 stem = re.sub(r"[^0-9A-Za-z_]", "_", path.stem) or "mod"
-                module_name = f"vibe_tools_discovered_{stem}"
+                module_hash = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+                module_name = f"vibe_tools_discovered_{stem}_{module_hash}"
 
                 spec = importlib.util.spec_from_file_location(module_name, path)
                 if spec is None or spec.loader is None:
@@ -98,7 +103,9 @@ class ToolManager:
                 sys.modules[module_name] = module
                 try:
                     spec.loader.exec_module(module)
-                except Exception:
+                except Exception as exc:  # pragma: no cover - best-effort guard
+                    logger.debug("Tool discovery failed for %s: %s", path, exc)
+                    sys.modules.pop(module_name, None)
                     continue
 
                 for obj in vars(module).values():
@@ -109,6 +116,89 @@ class ToolManager:
                     if inspect.isabstract(obj):
                         continue
                     yield obj
+                sys.modules.pop(module_name, None)
+
+    def _refresh_manifest(self) -> None:
+        valid_entries: list[ToolManifestEntry] = []
+        for entry in self._manifest.entries.values():
+            if entry.last_error is not None:
+                continue
+            if entry.is_valid():
+                valid_entries.append(entry)
+
+        if len(valid_entries) != len(self._manifest.entries) or not valid_entries:
+            valid_entries = self._discover_tools()
+            self._manifest.entries = {e.tool_name: e for e in valid_entries}
+            self._manifest.save()
+
+        self._tool_specs = {entry.tool_name: entry for entry in valid_entries}
+
+    def _discover_tools(self) -> list[ToolManifestEntry]:
+        entries: list[ToolManifestEntry] = []
+        for cls in self._iter_tool_classes(self._search_paths):
+            try:
+                class_path = Path(inspect.getfile(cls)).resolve()
+                module_hash = hashlib.sha256(str(class_path).encode("utf-8")).hexdigest()[
+                    :16
+                ]
+                module_name = f"vibe_tools_cached_{module_hash}"
+
+                entry = ToolManifestEntry(
+                    tool_name=cls.get_name(),
+                    file_path=class_path,
+                    file_hash=_hash_file(class_path),
+                    module_name=module_name,
+                    qualname=cls.__qualname__,
+                    description=getattr(cls, "description", None),
+                )
+                entries.append(entry)
+            except Exception as exc:  # pragma: no cover - safety net
+                logger.debug("Skipping tool during discovery due to error: %s", exc)
+                continue
+        return entries
+
+    def _load_class_for_entry(self, entry: ToolManifestEntry) -> type[BaseTool]:
+        if entry.loaded_class is not None:
+            return entry.loaded_class
+
+        spec = importlib.util.spec_from_file_location(entry.module_name, entry.file_path)
+        if spec is None or spec.loader is None:
+            raise NoSuchToolError(f"Cannot load tool module at {entry.file_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[entry.module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            raise NoSuchToolError(
+                f"Error loading tool module {entry.file_path}: {exc}"
+            ) from exc
+
+        obj: Any = module
+        for part in entry.qualname.split("."):
+            obj = getattr(obj, part)
+
+        if not inspect.isclass(obj) or not issubclass(obj, BaseTool):
+            raise NoSuchToolError(
+                f"Loaded object {entry.qualname} from {entry.file_path} is not a tool"
+            )
+
+        entry.loaded_class = obj
+        return obj
+
+    def _get_tool_class(self, tool_name: str) -> type[BaseTool]:
+        if tool_name in self._available:
+            return self._available[tool_name]
+
+        spec = self._tool_specs.get(tool_name)
+        if spec is None:
+            raise NoSuchToolError(
+                f"Unknown tool: {tool_name}. Available: {list(self._tool_specs.keys())}"
+            )
+
+        tool_class = self._load_class_for_entry(spec)
+        self._available[tool_name] = tool_class
+        return tool_class
 
     @staticmethod
     def discover_tool_defaults(
@@ -131,7 +221,12 @@ class ToolManager:
         return defaults
 
     def available_tools(self) -> dict[str, type[BaseTool]]:
-        return dict(self._available)
+        tools: dict[str, type[BaseTool]] = {}
+        for name in self._tool_specs:
+            tools[name] = self._get_tool_class(name)
+        for name, cls in self._available.items():
+            tools.setdefault(name, cls)
+        return tools
 
     def _integrate_mcp(self) -> None:
         if not self._config.mcp_servers:
@@ -225,7 +320,10 @@ class ToolManager:
         return added
 
     def get_tool_config(self, tool_name: str) -> BaseToolConfig:
-        tool_class = self._available.get(tool_name)
+        tool_class = (
+            self._available.get(tool_name)
+            or (self._get_tool_class(tool_name) if tool_name in self._tool_specs else None)
+        )
 
         if tool_class:
             config_class = tool_class._get_tool_config_class()
@@ -254,12 +352,13 @@ class ToolManager:
         if tool_name in self._instances:
             return self._instances[tool_name]
 
-        if tool_name not in self._available:
+        if tool_name not in self._tool_specs and tool_name not in self._available:
             raise NoSuchToolError(
-                f"Unknown tool: {tool_name}. Available: {list(self._available.keys())}"
+                f"Unknown tool: {tool_name}. Available: "
+                f"{list({**self._tool_specs, **self._available}.keys())}"
             )
 
-        tool_class = self._available[tool_name]
+        tool_class = self._get_tool_class(tool_name)
         tool_config = self.get_tool_config(tool_name)
         self._instances[tool_name] = tool_class.from_config(tool_config)
         return self._instances[tool_name]
