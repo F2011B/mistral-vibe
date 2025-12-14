@@ -337,51 +337,60 @@ class VibeApp(App):
         return False
 
     async def _configure_windows_shell(self) -> None:
-        candidate_paths = [
-            Path(r"C:\Program Files\Git\bin\bash.exe"),
-            Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
-            Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
-        ]
-        env_path = os.environ.get("GIT_BASH_PATH")
-        if env_path:
-            candidate_paths.insert(0, Path(env_path))
+        try:
+            candidate_paths = [
+                Path(r"C:\Program Files\Git\bin\bash.exe"),
+                Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+                Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
+            ]
+            env_path = os.environ.get("GIT_BASH_PATH")
+            if env_path:
+                candidate_paths.insert(0, Path(env_path))
 
-        discovered = next((p for p in candidate_paths if p.is_file()), None)
-        if discovered is None:
+            discovered = next((p for p in candidate_paths if p.is_file()), None)
+            if discovered is None:
+                await self._mount_and_scroll(
+                    ErrorMessage(
+                        "Git Bash not found. Install Git for Windows or set GIT_BASH_PATH.",
+                        collapsed=self._tools_collapsed,
+                    )
+                )
+                return
+
+            current_bash_config = self.config.tools.get("bash")
+            default_allowlist = BashToolConfig().allowlist
+            existing_allowlist = (
+                current_bash_config.allowlist
+                if current_bash_config and hasattr(current_bash_config, "allowlist")
+                else default_allowlist
+            )
+            allowlist = list({*existing_allowlist, "grep"})
+
+            bash_tool_updates: dict[str, object] = {
+                "use_git_bash_env": True,
+                "git_bash_path": str(discovered),
+                "allowlist": allowlist,
+            }
+            grep_updates: dict[str, object] = {
+                "use_git_bash_env": True,
+                "git_bash_path": str(discovered),
+            }
+
+            VibeConfig.save_updates(
+                {"tools": {"bash": bash_tool_updates, "grep": grep_updates}}
+            )
+            await self._reload_config()
             await self._mount_and_scroll(
-                ErrorMessage(
-                    "Git Bash not found. Install Git for Windows or set GIT_BASH_PATH.",
-                    collapsed=self._tools_collapsed,
+                UserCommandMessage(
+                    f"Configured Git Bash at '{discovered}'. Bash and grep tools will run through Git Bash."
                 )
             )
-            return
-
-        current_bash_config = self.config.tools.get("bash")
-        default_allowlist = BashToolConfig().allowlist
-        existing_allowlist = (
-            current_bash_config.allowlist
-            if current_bash_config and hasattr(current_bash_config, "allowlist")
-            else default_allowlist
-        )
-        allowlist = list({*existing_allowlist, "grep"})
-
-        bash_tool_updates: dict[str, object] = {
-            "use_git_bash_env": True,
-            "git_bash_path": str(discovered),
-            "allowlist": allowlist,
-        }
-        grep_updates: dict[str, object] = {
-            "use_git_bash_env": True,
-            "git_bash_path": str(discovered),
-        }
-
-        VibeConfig.save_updates({"tools": {"bash": bash_tool_updates, "grep": grep_updates}})
-        await self._reload_config()
-        await self._mount_and_scroll(
-            UserCommandMessage(
-                f"Configured Git Bash at '{discovered}'. Bash and grep tools will run through Git Bash."
+        except Exception as exc:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    f"Failed to configure Git Bash: {exc}", collapsed=self._tools_collapsed
+                )
             )
-        )
 
     async def _handle_bash_command(self, command: str) -> None:
         if not command:
