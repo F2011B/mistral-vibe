@@ -650,14 +650,26 @@ class VibeApp(App):
                 )
             )
 
+    async def _await_screen(self, screen: ModalScreen | Screen | str) -> Any:
+        """Push a screen and await its dismissal without requiring a worker."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+
+        def _resolver(result: Any) -> None:
+            if not future.done():
+                future.set_result(result)
+
+        self.push_screen(screen, callback=_resolver, wait_for_dismiss=False)
+        return await future
+
     async def action_add_provider(self) -> None:
-        draft = await self.push_screen_wait(ProviderWizard(self.config))
+        draft = await self._await_screen(ProviderWizard(self.config))
         if draft is None:
             return
         await self._apply_provider_draft(draft)
 
     async def action_add_model(self) -> None:
-        model = await self.push_screen_wait(
+        model = await self._await_screen(
             ModelWizard(
                 provider_name=self.config.get_active_model().provider
                 if self.config.models

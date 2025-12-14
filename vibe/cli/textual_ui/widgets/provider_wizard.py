@@ -219,7 +219,7 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
                 provider_choices=[p.name for p in self._config.providers],
             ),
             callback=_capture,
-            wait_for_dismiss=True,
+            wait_for_dismiss=False,
         )
 
     def _update_model_list(self) -> None:
