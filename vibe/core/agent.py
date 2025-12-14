@@ -4,6 +4,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Callable
 from enum import StrEnum, auto
+import json
 import time
 from typing import Any, cast
 from uuid import uuid4
@@ -87,6 +88,9 @@ class LLMResponseError(AgentError):
 
 
 class Agent:
+    _REPEAT_TOOL_THRESHOLD = 3
+    _MAX_TOOL_HISTORY = 6
+
     def __init__(
         self,
         config: VibeConfig,
@@ -140,6 +144,7 @@ class Agent:
         )
 
         self._last_chunk: LLMChunk | None = None
+        self._recent_tool_calls: list[tuple[str, str]] = []
 
     def _select_backend(self) -> BackendLike:
         active_model = self.config.get_active_model()
@@ -469,6 +474,32 @@ class Agent:
 
         for tool_call in resolved.tool_calls:
             tool_call_id = tool_call.call_id
+            signature = self._tool_call_signature(tool_call)
+
+            if self._is_repeated_tool_call(signature):
+                loop_msg = (
+                    f"<{TOOL_ERROR_TAG}>Tool '{tool_call.tool_name}' called repeatedly "
+                    "with the same arguments; stopping to avoid an infinite loop."
+                    f"</{TOOL_ERROR_TAG}>"
+                )
+                self.stats.tool_calls_failed += 1
+
+                yield ToolResultEvent(
+                    tool_name=tool_call.tool_name,
+                    tool_class=tool_call.tool_class,
+                    error=loop_msg,
+                    tool_call_id=tool_call_id,
+                )
+
+                self.messages.append(
+                    LLMMessage.model_validate(
+                        self.format_handler.create_tool_response_message(
+                            tool_call, loop_msg
+                        )
+                    )
+                )
+                self._record_tool_call(signature)
+                continue
 
             yield ToolCallEvent(
                 tool_name=tool_call.tool_name,
@@ -543,6 +574,7 @@ class Agent:
                         )
                     )
                 )
+                self._record_tool_call(signature)
 
                 yield ToolResultEvent(
                     tool_name=tool_call.tool_name,
@@ -571,6 +603,7 @@ class Agent:
                         )
                     )
                 )
+                self._record_tool_call(signature)
                 await self.interaction_logger.save_interaction(
                     self.messages, self.stats, self.config, self.tool_manager
                 )
@@ -593,6 +626,7 @@ class Agent:
                         )
                     )
                 )
+                self._record_tool_call(signature)
                 await self.interaction_logger.save_interaction(
                     self.messages, self.stats, self.config, self.tool_manager
                 )
@@ -620,6 +654,7 @@ class Agent:
                         )
                     )
                 )
+                self._record_tool_call(signature)
                 continue
 
     async def _chat(self, max_tokens: int | None = None) -> LLMChunk:
@@ -859,6 +894,25 @@ class Agent:
 
     def set_approval_callback(self, callback: ApprovalCallback) -> None:
         self.approval_callback = callback
+
+    def _tool_call_signature(self, tool_call: ResolvedToolCall) -> tuple[str, str]:
+        return (
+            tool_call.tool_name,
+            json.dumps(tool_call.args_dict, sort_keys=True, separators=(",", ":")),
+        )
+
+    def _is_repeated_tool_call(self, signature: tuple[str, str]) -> bool:
+        if self._REPEAT_TOOL_THRESHOLD <= 1:
+            return False
+        window = self._recent_tool_calls[-(self._REPEAT_TOOL_THRESHOLD - 1) :]
+        return len(window) >= self._REPEAT_TOOL_THRESHOLD - 1 and all(
+            sig == signature for sig in window
+        )
+
+    def _record_tool_call(self, signature: tuple[str, str]) -> None:
+        self._recent_tool_calls.append(signature)
+        if len(self._recent_tool_calls) > self._MAX_TOOL_HISTORY:
+            self._recent_tool_calls.pop(0)
 
     async def clear_history(self) -> None:
         await self.interaction_logger.save_interaction(
