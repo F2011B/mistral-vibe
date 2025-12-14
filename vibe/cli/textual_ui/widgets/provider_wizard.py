@@ -5,6 +5,7 @@ from typing import Iterable
 
 from textual import events
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
@@ -34,6 +35,10 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
 
     DEFAULT_TEMP = "0.2"
     DEFAULT_PRICE = "0.0"
+    BINDINGS = [
+        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("ctrl+c", "dismiss_modal", "Close", show=False),
+    ]
 
     def __init__(
         self,
@@ -105,6 +110,9 @@ class ModelWizard(ModalScreen[ModelConfig | None]):
         if event.key == "escape":
             self.dismiss(None)
 
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
+
     def _build_model(self) -> ModelConfig | None:
         name = (self.name_input.value or "").strip()
         alias = (self.alias_input.value or "").strip() or name
@@ -146,6 +154,11 @@ class ProviderDraft:
 
 class ProviderWizard(ModalScreen[ProviderDraft]):
     """Wizard to collect a provider and any associated models."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss_modal", "Close", show=False),
+        Binding("ctrl+c", "dismiss_modal", "Close", show=False),
+    ]
 
     class Submitted(Message):
         def __init__(self, draft: ProviderDraft) -> None:
@@ -277,3 +290,6 @@ class ProviderWizard(ModalScreen[ProviderDraft]):
     def on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             self.dismiss(None)
+
+    def action_dismiss_modal(self) -> None:
+        self.dismiss(None)
