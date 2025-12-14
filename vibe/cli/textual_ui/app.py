@@ -1216,9 +1216,6 @@ class VibeApp(App):
             if not is_tool_message:
                 self.call_after_refresh(self._scroll_to_bottom)
 
-        if was_at_bottom:
-            self.call_after_refresh(self._anchor_if_scrollable)
-
     def _is_scrolled_to_bottom(self, scroll_view: VerticalScroll) -> bool:
         try:
             threshold = 3
@@ -1227,6 +1224,8 @@ class VibeApp(App):
             return True
 
     def _scroll_to_bottom(self) -> None:
+        if not self._auto_scroll:
+            return
         try:
             chat = self.query_one("#chat")
             chat.scroll_end(animate=False)
@@ -1236,16 +1235,13 @@ class VibeApp(App):
     def _scroll_to_bottom_deferred(self) -> None:
         self.call_after_refresh(self._scroll_to_bottom)
 
-    def _anchor_if_scrollable(self) -> None:
-        if not self._auto_scroll:
-            return
+    def on_mouse_scroll(self, event: events.MouseScroll) -> None:
         try:
             chat = self.query_one("#chat", VerticalScroll)
-            if chat.max_scroll_y == 0:
-                return
-            chat.anchor()
         except Exception:
-            pass
+            return
+
+        self._auto_scroll = self._is_scrolled_to_bottom(chat)
 
     def on_mouse_scroll(self, event: events.MouseScroll) -> None:
         """Let users override auto-scroll when they manually scroll."""
