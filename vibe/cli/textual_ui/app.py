@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from enum import StrEnum, auto
+from pathlib import Path
 import subprocess
 from typing import Any, ClassVar, assert_never
 
@@ -332,6 +334,54 @@ class VibeApp(App):
                 handler()
             return True
         return False
+
+    async def _configure_windows_shell(self) -> None:
+        if not is_windows():
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Windows shell setup is only available on Windows.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+
+        candidate_paths = [
+            Path(r"C:\Program Files\Git\bin\bash.exe"),
+            Path(r"C:\Program Files (x86)\Git\bin\bash.exe"),
+            Path(r"C:\Program Files\Git\usr\bin\bash.exe"),
+        ]
+        env_path = os.environ.get("GIT_BASH_PATH")
+        if env_path:
+            candidate_paths.insert(0, Path(env_path))
+
+        discovered = next((p for p in candidate_paths if p.is_file()), None)
+        if discovered is None:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Git Bash not found. Install Git for Windows or set GIT_BASH_PATH.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+
+        bash_tool_updates: dict[str, object] = {
+            "use_git_bash_env": True,
+            "git_bash_path": str(discovered),
+        }
+
+        current_allowlist = self.config.tools.get("bash", BaseToolConfig()).model_dump().get(
+            "allowlist", []
+        )
+        if "grep" not in current_allowlist:
+            bash_tool_updates["allowlist"] = [*current_allowlist, "grep"]
+
+        VibeConfig.save_updates({"tools": {"bash": bash_tool_updates}})
+        await self._reload_config()
+        await self._mount_and_scroll(
+            UserCommandMessage(
+                f"Configured Git Bash at '{discovered}'. Bash tool now uses grep via Git Bash."
+            )
+        )
 
     async def _handle_bash_command(self, command: str) -> None:
         if not command:

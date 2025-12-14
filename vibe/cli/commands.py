@@ -61,6 +61,11 @@ class CommandRegistry:
                 description="Open wizard to add a single model",
                 handler="_show_model_wizard",
             ),
+            "windows_shell": Command(
+                aliases=frozenset(["/windows-shell", "/gitbash", "/windows-setup"]),
+                description="Configure bash tool to use Git Bash on Windows (adds grep support)",
+                handler="_configure_windows_shell",
+            ),
             "exit": Command(
                 aliases=frozenset(["/exit", "/quit", "/q"]),
                 description="Exit the application",
