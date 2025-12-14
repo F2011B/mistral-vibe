@@ -151,6 +151,9 @@ class AssistantMessage(Static):
 
         self._show_reasoning = show
         self._show_reasoning_container()
+        # Re-sync rendered content to avoid losing text when toggling visibility.
+        if self._markdown is not None and self._content:
+            self._markdown.update(self._content)
         if self._show_reasoning and self._reasoning_content:
             # If the stream was never opened (reasoning hidden), render the stored text now.
             if self._reasoning_stream is None:
