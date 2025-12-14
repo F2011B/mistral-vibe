@@ -675,6 +675,17 @@ class VibeApp(App):
             return
 
         stats = self.agent.stats
+
+        try:
+            active_model = self.config.get_active_model()
+            stats.update_pricing(active_model.input_price, active_model.output_price)
+        except Exception:
+            pass
+
+        if stats.last_turn_duration > 0 and stats.last_turn_completion_tokens > 0:
+            stats.tokens_per_second = (
+                stats.last_turn_completion_tokens / stats.last_turn_duration
+            )
         status_text = f"""## Agent Statistics
 
 - **Steps**: {stats.steps:,}
