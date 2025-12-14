@@ -151,6 +151,10 @@ class AssistantMessage(Static):
 
         self._show_reasoning = show
         self._show_reasoning_container()
+        if self._show_reasoning and self._reasoning_content:
+            # If the stream was never opened (reasoning hidden), render the stored text now.
+            if self._reasoning_stream is None:
+                self._get_reasoning_markdown().update(self._reasoning_content)
 
 
 class UserCommandMessage(Static):
