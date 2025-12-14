@@ -302,16 +302,21 @@ class VibeApp(App):
             VibeConfig.save_updates({"tools": {tool_name: {"permission": "always"}}})
 
         current = self.config.tools.get(tool_name)
-        if isinstance(current, BaseToolConfig):
-            cfg = current
-        elif isinstance(current, dict):
-            cfg = BaseToolConfig.model_validate(current)
-            self.config.tools[tool_name] = cfg
-        else:
-            cfg = BaseToolConfig()
-            self.config.tools[tool_name] = cfg
+        try:
+            if isinstance(current, BaseToolConfig):
+                cfg = current
+            elif isinstance(current, dict):
+                cfg = BaseToolConfig.model_validate(current)
+                self.config.tools[tool_name] = cfg
+            else:
+                cfg = BaseToolConfig()
+                self.config.tools[tool_name] = cfg
 
-        cfg.permission = ToolPermission.ALWAYS
+            cfg.permission = ToolPermission.ALWAYS
+        except Exception:
+            # Absolute fallback: overwrite with a fresh config to avoid attribute errors
+            cfg = BaseToolConfig(permission=ToolPermission.ALWAYS)
+            self.config.tools[tool_name] = cfg
 
     def _save_config_changes(self, changes: dict[str, str]) -> None:
         if not changes:
