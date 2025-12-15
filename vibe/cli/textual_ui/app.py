@@ -352,6 +352,9 @@ class VibeApp(App):
             return True
         return False
 
+    def _toggle_auto_scroll(self) -> None:
+        self.action_toggle_autoscroll()
+
     async def _configure_windows_shell(self) -> None:
         try:
             candidate_paths = [
