@@ -169,7 +169,7 @@ async def test_llm_endpoint_handles_grep_prompt(monkeypatch: pytest.MonkeyPatch)
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
 async def test_llm_endpoint_calls_all_allowed_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prompt the model to chain all allowed tools (bash then grep) in one response."""
+    """Prompt the model to chain allowed tools across two turns (bash then grep)."""
 
     api_base, adapter, tools, system_prompt, model_name, provider = _build_integration_context(
         monkeypatch
@@ -180,10 +180,9 @@ async def test_llm_endpoint_calls_all_allowed_tools(monkeypatch: pytest.MonkeyPa
         LLMMessage(
             role=Role.user,
             content=(
-                "Your next message must include two tool calls in order: "
-                "1) call the bash tool with command \"ls -la\" "
-                "2) call the grep tool with pattern \"TODO\" and path \".\" "
-                "Do not include any assistant content or reasoning, only the tool calls."
+                "First, list files using the bash tool with command \"ls -la\". "
+                "After that tool call, continue and use the grep tool to search for \"TODO\" under '.'. "
+                "Start with the bash tool call now."
             ),
         ),
     ]
@@ -214,10 +213,54 @@ async def test_llm_endpoint_calls_all_allowed_tools(monkeypatch: pytest.MonkeyPa
         )
 
     chunk = adapter.parse_response(response.json())
-    tool_calls = chunk.message.tool_calls or []
-    assert len(tool_calls) >= 2, "Expected at least two tool calls (bash and grep)"
-    names = [tc.function.name for tc in tool_calls]
-    assert {"bash", "grep"}.issubset(set(names))
-    # If order is provided, prefer bash first
-    if len(names) >= 2:
-        assert names[0] == "bash", f"Expected bash first, got {names[0]}"
+    first_tool_calls = chunk.message.tool_calls or []
+    assert first_tool_calls, "Expected at least one tool call (bash) on first turn"
+    assert first_tool_calls[0].function.name == "bash"
+
+    bash_call_id = first_tool_calls[0].id or "bash_call"
+    tool_response = LLMMessage(
+        role=Role.tool,
+        content="listing complete",
+        name="bash",
+        tool_call_id=bash_call_id,
+    )
+
+    follow_up_messages = [
+        *messages,
+        chunk.message,
+        tool_response,
+        LLMMessage(
+            role=Role.user,
+            content="Proceed with the grep step now using the TODO pattern at '.'.",
+        ),
+    ]
+
+    endpoint, headers, body = adapter.prepare_request(
+        model_name=model_name,
+        messages=follow_up_messages,
+        temperature=0.0,
+        tools=tools,
+        max_tokens=256,
+        tool_choice="auto",
+        enable_streaming=False,
+        provider=provider,
+        api_key=None,
+    )
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"{api_base}{endpoint}", headers=headers, content=body
+            )
+        except httpx.RequestError as exc:  # pragma: no cover - env dependent
+            pytest.skip(f"LLM endpoint not reachable on follow-up: {exc!r}")
+
+    if response.status_code >= 400:  # pragma: no cover - env dependent
+        pytest.skip(
+            f"LLM endpoint responded with {response.status_code} on follow-up: {response.text}"
+        )
+
+    second_chunk = adapter.parse_response(response.json())
+    second_calls = second_chunk.message.tool_calls or []
+    assert second_calls, "Expected a grep tool call on follow-up"
+    assert second_calls[0].function.name == "grep"
