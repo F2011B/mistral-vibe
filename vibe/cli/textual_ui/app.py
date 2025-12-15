@@ -379,9 +379,6 @@ class VibeApp(App):
                 else default_allowlist
             )
             allowlist = list({*existing_allowlist, "grep"})
-            if BashToolConfig.default_posix_allowlist():
-                # When running through Git Bash, prefer POSIX-friendly commands.
-                allowlist = BashToolConfig.default_posix_allowlist()
 
             bash_tool_updates: dict[str, object] = {
                 "use_git_bash_env": True,

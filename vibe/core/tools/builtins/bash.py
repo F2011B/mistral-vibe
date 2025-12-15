@@ -80,28 +80,24 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-def _posix_allowlist() -> list[str]:
-    return [
-        "cat",
-        "file",
-        "head",
-        "ls",
-        "pwd",
-        "stat",
-        "tail",
-        "uname",
-        "wc",
-        "which",
-    ]
-
-
-def _windows_allowlist() -> list[str]:
-    return ["dir", "findstr", "more", "type", "ver", "where"]
-
-
 def _get_default_allowlist() -> list[str]:
     common = ["echo", "find", "git diff", "git log", "git status", "tree", "whoami"]
-    return common + (_windows_allowlist() if is_windows() else _posix_allowlist())
+
+    if is_windows():
+        return common + ["dir", "findstr", "more", "type", "ver", "where"]
+    else:
+        return common + [
+            "cat",
+            "file",
+            "head",
+            "ls",
+            "pwd",
+            "stat",
+            "tail",
+            "uname",
+            "wc",
+            "which",
+        ]
 
 
 def _get_default_denylist() -> list[str]:
@@ -176,11 +172,6 @@ class BashToolConfig(BaseToolConfig):
             "Optional script to source before running commands (e.g., ./setup.sh)."
         ),
     )
-
-    @classmethod
-    def default_posix_allowlist(cls) -> list[str]:
-        """Return the baseline POSIX command allowlist."""
-        return ["echo", "find", "git diff", "git log", "git status", "tree", "whoami", *_posix_allowlist()]
 
 
 class BashArgs(BaseModel):
