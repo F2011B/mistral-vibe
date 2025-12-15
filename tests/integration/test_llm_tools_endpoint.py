@@ -19,13 +19,7 @@ DEFAULT_INTEGRATION_URL = "http://192.168.178.60:1234"
 
 @pytest.mark.asyncio
 async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Basic connectivity/integration check against a live LLM endpoint.
-
-    Verifies that:
-    - We build a system prompt that clearly instructs Git Bash / POSIX usage.
-    - We include the bash tool definition in the request payload.
-    - The live endpoint accepts the OpenAI-compatible payload.
-    """
+    """Integration check against a live LLM endpoint for Git Bash prompts and tool calls."""
 
     base_url = os.getenv("VIBE_LLM_INTEGRATION_URL", DEFAULT_INTEGRATION_URL).rstrip("/")
     model_name = os.getenv("VIBE_LLM_INTEGRATION_MODEL", "gpt-4o-mini")
@@ -68,49 +62,67 @@ async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPat
     assert "POSIX-style paths" in system_prompt
     assert "ls -la" in system_prompt
 
-    messages = [
-        LLMMessage(role=Role.system, content=system_prompt),
-        LLMMessage(
-            role=Role.user,
-            content="List the files in the current directory using the correct shell commands.",
+    prompts = [
+        (
+            "List the files in the current directory using the correct shell commands.",
+            "bash",
+            ["ls", "find"],
+            ["dir"],
+        ),
+        (
+            "Search recursively for TODO in this project using the grep tool.",
+            "grep",
+            ["todo"],
+            [],
         ),
     ]
 
     adapter = OpenAIAdapter()
-    try:
-        endpoint, headers, body = adapter.prepare_request(
-            model_name=model.name,
-            messages=messages,
-            temperature=0.0,
-            tools=tools,
-            max_tokens=128,
-            tool_choice="auto",
-            enable_streaming=False,
-            provider=provider,
-            api_key=None,
-        )
-    except Exception as exc:  # pragma: no cover - fails fast in integration env
-        pytest.fail(f"Failed to build request payload: {exc}")
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    for user_prompt, expected_tool, required_terms, forbidden_terms in prompts:
+        messages = [
+            LLMMessage(role=Role.system, content=system_prompt),
+            LLMMessage(role=Role.user, content=user_prompt),
+        ]
+
         try:
-            response = await client.post(
-                f"{api_base}{endpoint}", headers=headers, content=body
+            endpoint, headers, body = adapter.prepare_request(
+                model_name=model.name,
+                messages=messages,
+                temperature=0.0,
+                tools=tools,
+                max_tokens=128,
+                tool_choice="auto",
+                enable_streaming=False,
+                provider=provider,
+                api_key=None,
             )
-        except httpx.RequestError as exc:  # pragma: no cover - env dependent
-            pytest.skip(f"LLM endpoint not reachable: {exc}")
+        except Exception as exc:  # pragma: no cover - fails fast in integration env
+            pytest.fail(f"Failed to build request payload: {exc}")
 
-    if response.status_code >= 400:  # pragma: no cover - env dependent
-        pytest.skip(
-            f"LLM endpoint responded with {response.status_code}: {response.text}"
-        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                response = await client.post(
+                    f"{api_base}{endpoint}", headers=headers, content=body
+                )
+            except httpx.RequestError as exc:  # pragma: no cover - env dependent
+                pytest.skip(f"LLM endpoint not reachable: {exc!r}")
 
-    chunk = adapter.parse_response(response.json())
-    assert chunk.message.role == Role.assistant
-    tool_calls = chunk.message.tool_calls or []
-    assert tool_calls, "Expected the model to trigger a tool call for listing files"
-    for tool_call in tool_calls:
-        assert tool_call.function.name == "bash"
-        args = (tool_call.function.arguments or "").lower()
-        assert "dir" not in args
-        assert "ls" in args or "find" in args
+        if response.status_code >= 400:  # pragma: no cover - env dependent
+            pytest.skip(
+                f"LLM endpoint responded with {response.status_code}: {response.text}"
+            )
+
+        chunk = adapter.parse_response(response.json())
+        assert chunk.message.role == Role.assistant
+        tool_calls = chunk.message.tool_calls or []
+        assert tool_calls, f"Expected a tool call for prompt: {user_prompt}"
+        for tool_call in tool_calls:
+            assert (
+                tool_call.function.name == expected_tool
+            ), f"Expected tool {expected_tool}, got {tool_call.function.name}"
+            args = (tool_call.function.arguments or "").lower()
+            for term in required_terms:
+                assert term in args
+            for term in forbidden_terms:
+                assert term not in args
