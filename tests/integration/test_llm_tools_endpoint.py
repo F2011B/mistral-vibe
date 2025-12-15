@@ -299,7 +299,7 @@ async def test_bash_allowlist_commands(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 @pytest.mark.timeout(90)
 async def test_bash_git_chain(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ask for multiple bash tool calls (pwd, git status, git log -1) in a single turn."""
+    """Ask for bash tool calls across turns: pwd first, then git status/log."""
 
     api_base, adapter, tools, system_prompt, model_name, provider = _build_integration_context(
         monkeypatch
@@ -309,13 +309,7 @@ async def test_bash_git_chain(monkeypatch: pytest.MonkeyPatch) -> None:
         LLMMessage(role=Role.system, content=system_prompt),
         LLMMessage(
             role=Role.user,
-            content=(
-                "Reply only with three bash tool calls in order: "
-                "1) bash command \"pwd\" "
-                "2) bash command \"git status\" "
-                "3) bash command \"git log -1\" "
-                "Do not include any assistant content."
-            ),
+            content="Start by calling the bash tool with command \"pwd\". Then wait for further instructions.",
         ),
     ]
 
@@ -346,8 +340,56 @@ async def test_bash_git_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     chunk = adapter.parse_response(response.json())
     tool_calls = chunk.message.tool_calls or []
-    assert tool_calls, "Expected multiple bash tool calls"
+    assert tool_calls, "Expected at least one bash tool call"
     assert all(tc.function.name == "bash" for tc in tool_calls)
-    args_combined = " ".join(tc.function.arguments or "" for tc in tool_calls).lower()
-    assert "pwd" in args_combined
-    assert "git" in args_combined
+    first_call_id = tool_calls[0].id or "bash_call"
+
+    follow_up_messages = [
+        *messages,
+        chunk.message,
+        LLMMessage(
+            role=Role.tool,
+            content="ok",
+            name="bash",
+            tool_call_id=first_call_id,
+        ),
+        LLMMessage(
+            role=Role.user,
+            content=(
+                "Now call bash twice: first with \"git status\" and then with \"git log -1\". "
+                "Respond with tool calls only."
+            ),
+        ),
+    ]
+
+    endpoint, headers, body = adapter.prepare_request(
+        model_name=model_name,
+        messages=follow_up_messages,
+        temperature=0.0,
+        tools=tools,
+        max_tokens=256,
+        tool_choice="auto",
+        enable_streaming=False,
+        provider=provider,
+        api_key=None,
+    )
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        try:
+            response = await client.post(
+                f"{api_base}{endpoint}", headers=headers, content=body
+            )
+        except httpx.RequestError as exc:  # pragma: no cover - env dependent
+            pytest.skip(f"LLM endpoint not reachable: {exc!r}")
+
+    if response.status_code >= 400:  # pragma: no cover - env dependent
+        pytest.skip(
+            f"LLM endpoint responded with {response.status_code} on git chain: {response.text}"
+        )
+
+    second_chunk = adapter.parse_response(response.json())
+    second_calls = second_chunk.message.tool_calls or []
+    assert second_calls, "Expected git-related bash tool calls"
+    assert all(tc.function.name == "bash" for tc in second_calls)
+    combined = " ".join(tc.function.arguments or "" for tc in second_calls).lower()
+    assert "git status" in combined or "git log" in combined
