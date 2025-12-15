@@ -183,7 +183,7 @@ class LLMMessage(BaseModel):
 
     role: Role
     content: Content | None = None
-    reasoning_content: str | None = None
+    reasoning_content: Content | None = None
     tool_calls: list[ToolCall] | None = None
     name: str | None = None
     tool_call_id: str | None = None

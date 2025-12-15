@@ -167,7 +167,7 @@ class APIToolFormatHandler:
         clean_message = {
             "role": message.role,
             "content": message.content,
-            "reasoning_content": getattr(message, "reasoning_content", None),
+            "reasoning_content": message.reasoning_content,
         }
 
         if message.tool_calls:
