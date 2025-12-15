@@ -340,12 +340,26 @@ def _get_default_shell() -> str:
     return "sh"
 
 
-def _get_os_system_prompt() -> str:
+def _is_git_bash_enabled(config: "VibeConfig") -> bool:
+    bash_cfg = config.tools.get("bash") if hasattr(config, "tools") else None
+    return bool(getattr(bash_cfg, "use_git_bash_env", False)) if bash_cfg else False
+
+
+def _get_os_system_prompt(config: "VibeConfig") -> str:
     shell = _get_default_shell()
     platform_name = _get_platform_name()
     prompt = f"The operating system is {platform_name} with shell `{shell}`"
 
     if is_windows():
+        if _is_git_bash_enabled(config):
+            prompt += (
+                "\n### COMMAND COMPATIBILITY RULES (GIT BASH MODE):\n"
+                "- Commands run via Git Bash (POSIX tools available: ls, grep, cat, etc.)\n"
+                "- Prefer POSIX-style paths with forward slashes\n"
+                "- Use standard Unix commands for navigation and file listing (e.g., `ls -la`)\n"
+                "- `where` may not work reliably; prefer `which` inside Git Bash"
+            )
+            return prompt
         prompt += "\n" + _get_windows_system_prompt()
     return prompt
 
@@ -385,7 +399,7 @@ def get_universal_system_prompt(tool_manager: ToolManager, config: VibeConfig) -
         sections.append(f"Your model name is: `{config.active_model}`")
 
     if config.include_prompt_detail:
-        sections.append(_get_os_system_prompt())
+        sections.append(_get_os_system_prompt(config))
         tool_prompts = []
         active_tools = get_active_tool_classes(tool_manager, config)
         for tool_class in active_tools:

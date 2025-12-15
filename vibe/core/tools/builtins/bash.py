@@ -98,38 +98,52 @@ POSIX_ALLOWLIST = [
 WINDOWS_BUILTINS = ["dir", "findstr", "more", "type", "ver", "where"]
 
 
-def _get_default_allowlist() -> list[str]:
-    return COMMON_ALLOWLIST + (WINDOWS_BUILTINS if is_windows() else POSIX_ALLOWLIST)
+def _get_default_allowlist(
+    *, use_git_bash_env: bool | None = None
+) -> list[str]:
+    use_posix_on_windows = bool(use_git_bash_env and is_windows())
+
+    if is_windows() and not use_posix_on_windows:
+        return COMMON_ALLOWLIST + WINDOWS_BUILTINS
+    return COMMON_ALLOWLIST + POSIX_ALLOWLIST
 
 
-def _get_default_denylist() -> list[str]:
+def _get_default_denylist(
+    *, use_git_bash_env: bool | None = None
+) -> list[str]:
     common = ["gdb", "pdb", "passwd"]
+    posix_only = [
+        "nano",
+        "vim",
+        "vi",
+        "emacs",
+        "bash -i",
+        "sh -i",
+        "zsh -i",
+        "fish -i",
+        "dash -i",
+        "screen",
+        "tmux",
+    ]
 
-    if is_windows():
+    use_posix_on_windows = bool(use_git_bash_env and is_windows())
+
+    if is_windows() and not use_posix_on_windows:
         return common + ["cmd /k", "powershell -NoExit", "pwsh -NoExit", "notepad"]
-    else:
-        return common + [
-            "nano",
-            "vim",
-            "vi",
-            "emacs",
-            "bash -i",
-            "sh -i",
-            "zsh -i",
-            "fish -i",
-            "dash -i",
-            "screen",
-            "tmux",
-        ]
+    return common + posix_only
 
 
-def _get_default_denylist_standalone() -> list[str]:
+def _get_default_denylist_standalone(
+    *, use_git_bash_env: bool | None = None
+) -> list[str]:
     common = ["python", "python3", "ipython"]
+    posix_only = ["bash", "sh", "nohup", "vi", "vim", "emacs", "nano", "su"]
 
-    if is_windows():
+    use_posix_on_windows = bool(use_git_bash_env and is_windows())
+
+    if is_windows() and not use_posix_on_windows:
         return common + ["cmd", "powershell", "pwsh", "notepad"]
-    else:
-        return common + ["bash", "sh", "nohup", "vi", "vim", "emacs", "nano", "su"]
+    return common + posix_only
 
 
 class BashToolConfig(BaseToolConfig):

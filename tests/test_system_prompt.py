@@ -36,3 +36,27 @@ def test_get_universal_system_prompt_includes_windows_prompt_on_windows(
     assert "Use: backslashes (\\\\) for paths" in prompt
     assert "Check command availability with: `where command` (Windows)" in prompt
     assert "Script shebang: Not applicable on Windows" in prompt
+
+
+def test_get_universal_system_prompt_windows_git_bash_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
+
+    config = VibeConfig(
+        system_prompt_id="tests",
+        include_project_context=False,
+        include_prompt_detail=True,
+        include_model_info=False,
+        include_commit_signature=False,
+        tools={"bash": {"use_git_bash_env": True}},
+    )
+    tool_manager = ToolManager(config)
+
+    prompt = get_universal_system_prompt(tool_manager, config)
+
+    assert "POSIX tools available" in prompt
+    assert "Commands run via Git Bash" in prompt
+    assert "Use standard Unix commands" in prompt
+    assert "DO NOT use Unix commands" not in prompt

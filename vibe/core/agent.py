@@ -350,6 +350,7 @@ class Agent:
         )
 
     async def _stream_assistant_events(self) -> AsyncGenerator[AssistantEvent]:
+        had_prior_assistant = self._last_assistant_message is not None
         chunks: list[LLMChunk] = []
         content_buffer = ""
         reasoning_buffer = ""
@@ -387,6 +388,16 @@ class Agent:
             if chunk.message.reasoning_content:
                 reasoning_buffer += chunk.message.reasoning_content
                 chunk_has_payload = True
+
+            if chunk_has_payload and chunk.message.reasoning_content and not chunk.message.content:
+                yield self._create_assistant_event(
+                    content_buffer, chunk, reasoning_buffer or None
+                )
+                emitted = True
+                content_buffer = ""
+                reasoning_buffer = ""
+                chunks_with_payload = 0
+                continue
 
             if chunk_has_payload:
                 chunks_with_payload += 1
@@ -445,6 +456,12 @@ class Agent:
         self._last_chunk = LLMChunk(
             message=last_message, usage=chunks[-1].usage, finish_reason=finish_reason
         )
+
+        if not emitted and not had_prior_assistant:
+            yield AssistantEvent(
+                content=last_message.content or "",
+                reasoning_content=last_message.reasoning_content,
+            )
 
     async def _get_assistant_event(self) -> AssistantEvent:
         llm_result = await self._chat()

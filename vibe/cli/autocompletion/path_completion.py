@@ -7,11 +7,10 @@ from textual import events
 
 from vibe.cli.autocompletion.base import CompletionResult, CompletionView
 from vibe.core.autocompletion.completers import (
-    DEFAULT_TARGET_MATCHES,
     PathCompleter,
 )
 
-MAX_SUGGESTIONS_COUNT = DEFAULT_TARGET_MATCHES
+MAX_SUGGESTIONS_COUNT = 10
 
 
 class PathCompletionController:

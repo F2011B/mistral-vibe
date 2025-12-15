@@ -57,7 +57,11 @@ from vibe.core.config import ModelConfig, VibeConfig
 from vibe.core.config_path import HISTORY_FILE
 from vibe.core.tools.base import BaseToolConfig, ToolPermission
 from vibe.core.types import ApprovalResponse, LLMMessage, ResumeSessionInfo, Role
-from vibe.core.tools.builtins.bash import BashToolConfig
+from vibe.core.tools.builtins.bash import (
+    BashToolConfig,
+    _get_default_denylist,
+    _get_default_denylist_standalone,
+)
 from vibe.core.utils import (
     CancellationReason,
     get_user_cancellation_message,
@@ -377,19 +381,30 @@ class VibeApp(App):
                 return
 
             current_bash_config = self.config.tools.get("bash")
-            default_allowlist = BashToolConfig().allowlist
-            existing_allowlist = (
-                current_bash_config.allowlist
-                if current_bash_config and hasattr(current_bash_config, "allowlist")
-                else default_allowlist
+            default_denylist = _get_default_denylist(use_git_bash_env=True)
+            default_denylist_standalone = _get_default_denylist_standalone(
+                use_git_bash_env=True
             )
             # When using Git Bash, force a POSIX-friendly allowlist.
             allowlist = list({*BashToolConfig.posix_allowlist(), "grep"})
+            denylist = (
+                current_bash_config.denylist
+                if current_bash_config and hasattr(current_bash_config, "denylist")
+                else default_denylist
+            )
+            denylist_standalone = (
+                current_bash_config.denylist_standalone
+                if current_bash_config
+                and hasattr(current_bash_config, "denylist_standalone")
+                else default_denylist_standalone
+            )
 
             bash_tool_updates: dict[str, object] = {
                 "use_git_bash_env": True,
                 "git_bash_path": str(discovered),
                 "allowlist": allowlist,
+                "denylist": denylist,
+                "denylist_standalone": denylist_standalone,
             }
             grep_updates: dict[str, object] = {
                 "use_git_bash_env": True,
