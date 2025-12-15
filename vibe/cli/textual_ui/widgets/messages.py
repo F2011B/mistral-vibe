@@ -81,27 +81,33 @@ class AssistantMessage(Static):
 
     def _get_reasoning_markdown(self) -> Markdown:
         if self._reasoning_markdown is None:
-            self._reasoning_markdown = self.query_one(
-                ".assistant-reasoning-markdown", Markdown
-            )
+            match = self.query(".assistant-reasoning-markdown")
+            if match:
+                candidate = match.first()
+                if isinstance(candidate, Markdown):
+                    self._reasoning_markdown = candidate
         return self._reasoning_markdown
 
     def _ensure_reasoning_stream(self) -> MarkdownStream:
         if self._reasoning_stream is None:
-            self._reasoning_stream = Markdown.get_stream(
-                self._get_reasoning_markdown()
-            )
+            markdown = self._get_reasoning_markdown()
+            if markdown is None:
+                return self._ensure_stream()
+            self._reasoning_stream = Markdown.get_stream(markdown)
         return self._reasoning_stream
 
     def _show_reasoning_container(self) -> None:
         if self._reasoning_container is None:
-            self._reasoning_container = self.query_one(
-                ".assistant-reasoning-container", Vertical
-            )
-        if self._reasoning_container:
-            self._reasoning_container.display = (
-                self._show_reasoning and bool(self._reasoning_content)
-            )
+            match = self.query(".assistant-reasoning-container")
+            if match:
+                candidate = match.first()
+                if isinstance(candidate, Vertical):
+                    self._reasoning_container = candidate
+        if not self._reasoning_container:
+            return
+        self._reasoning_container.display = (
+            self._show_reasoning and bool(self._reasoning_content)
+        )
 
     async def append_content(self, content: str) -> None:
         if not content:
