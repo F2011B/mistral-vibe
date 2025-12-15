@@ -80,24 +80,26 @@ async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-def _get_default_allowlist() -> list[str]:
-    common = ["echo", "find", "git diff", "git log", "git status", "tree", "whoami"]
+COMMON_ALLOWLIST = ["echo", "find", "git diff", "git log", "git status", "tree", "whoami"]
 
-    if is_windows():
-        return common + ["dir", "findstr", "more", "type", "ver", "where"]
-    else:
-        return common + [
-            "cat",
-            "file",
-            "head",
-            "ls",
-            "pwd",
-            "stat",
-            "tail",
-            "uname",
-            "wc",
-            "which",
-        ]
+POSIX_ALLOWLIST = [
+    "cat",
+    "file",
+    "head",
+    "ls",
+    "pwd",
+    "stat",
+    "tail",
+    "uname",
+    "wc",
+    "which",
+]
+
+WINDOWS_BUILTINS = ["dir", "findstr", "more", "type", "ver", "where"]
+
+
+def _get_default_allowlist() -> list[str]:
+    return COMMON_ALLOWLIST + (WINDOWS_BUILTINS if is_windows() else POSIX_ALLOWLIST)
 
 
 def _get_default_denylist() -> list[str]:
@@ -173,6 +175,10 @@ class BashToolConfig(BaseToolConfig):
         ),
     )
 
+    @staticmethod
+    def posix_allowlist() -> list[str]:
+        return COMMON_ALLOWLIST + POSIX_ALLOWLIST
+
 
 class BashArgs(BaseModel):
     command: str
@@ -201,6 +207,10 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
             return None
 
         def is_denylisted(command: str) -> bool:
+            if is_windows() and self.config.use_git_bash_env:
+                # Filter out Windows-specific builtins when using Git Bash.
+                if any(command.startswith(pattern) for pattern in WINDOWS_BUILTINS):
+                    return True
             return any(command.startswith(pattern) for pattern in self.config.denylist)
 
         def is_standalone_denylisted(command: str) -> bool:
