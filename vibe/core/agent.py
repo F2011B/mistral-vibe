@@ -112,8 +112,6 @@ class Agent:
         self.message_observer = message_observer
         self._last_observed_message_index: int = 0
         self._last_assistant_message: LLMMessage | None = None
-        self._trailing_content_after_tool_calls = False
-        self._last_finish_chunk_had_tool_calls = False
         self.middleware_pipeline = MiddlewarePipeline()
         self.enable_streaming = enable_streaming
         self._setup_middleware(max_turns, max_price)
@@ -269,18 +267,12 @@ class Agent:
                 last_message = self.messages[-1]
                 last_chunk = self._last_chunk
                 assistant_message = self._last_assistant_message or last_message
-                last_message_tool_calls = getattr(assistant_message, "tool_calls", None)
-                should_break_loop = False
-                if last_chunk is not None and last_chunk.finish_reason is not None:
-                    if last_message_tool_calls:
-                        should_break_loop = (
-                            self._last_finish_chunk_had_tool_calls
-                            or self._trailing_content_after_tool_calls
-                        )
-                    else:
-                        should_break_loop = True
-                elif last_message_tool_calls:
-                    should_break_loop = False
+                has_tool_calls = bool(getattr(assistant_message, "tool_calls", None))
+                should_break_loop = (
+                    not has_tool_calls
+                    and last_chunk is not None
+                    and last_chunk.finish_reason is not None
+                )
 
                 self._flush_new_messages()
                 await self.interaction_logger.save_interaction(
@@ -320,8 +312,6 @@ class Agent:
     async def _perform_llm_turn(
         self,
     ) -> AsyncGenerator[AssistantEvent | ToolCallEvent | ToolResultEvent]:
-        self._trailing_content_after_tool_calls = False
-        self._last_finish_chunk_had_tool_calls = False
         if self.enable_streaming:
             async for event in self._stream_assistant_events():
                 yield event
@@ -366,16 +356,11 @@ class Agent:
         chunks_with_payload = 0
         BATCH_SIZE = 5
         emitted = False
-        tool_calls_seen = False
-        content_after_tool_calls = False
 
         async for chunk in self._chat_streaming():
             chunks.append(chunk)
 
             chunk_has_payload = False
-
-            if chunk.message.tool_calls:
-                tool_calls_seen = True
 
             if chunk.message.tool_calls and chunk.finish_reason is None:
                 if chunk.message.content:
@@ -398,8 +383,6 @@ class Agent:
             if chunk.message.content:
                 content_buffer += chunk.message.content
                 chunk_has_payload = True
-                if tool_calls_seen:
-                    content_after_tool_calls = True
 
             if chunk.message.reasoning_content:
                 reasoning_buffer += chunk.message.reasoning_content
@@ -457,11 +440,9 @@ class Agent:
         finish_reason = next(
             (c.finish_reason for c in chunks if c.finish_reason is not None), None
         )
-        self._last_finish_chunk_had_tool_calls = bool(chunks[-1].message.tool_calls)
         self._last_chunk = LLMChunk(
             message=last_message, usage=chunks[-1].usage, finish_reason=finish_reason
         )
-        self._trailing_content_after_tool_calls = content_after_tool_calls
 
     async def _get_assistant_event(self) -> AssistantEvent:
         llm_result = await self._chat()
@@ -474,7 +455,6 @@ class Agent:
         if not assistant_msg.content:
             assistant_msg.content = EMPTY_RESPONSE_FALLBACK
         self._last_assistant_message = assistant_msg
-        self._last_finish_chunk_had_tool_calls = bool(assistant_msg.tool_calls)
         self.messages.append(assistant_msg)
 
         return AssistantEvent(
