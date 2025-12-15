@@ -146,9 +146,6 @@ class AssistantMessage(Static):
             self._reasoning_stream = None
 
     def set_show_reasoning(self, show: bool) -> None:
-        if self._show_reasoning == show:
-            return
-
         self._show_reasoning = show
         self._show_reasoning_container()
         # Re-sync rendered content to avoid losing text when toggling visibility.
@@ -156,8 +153,14 @@ class AssistantMessage(Static):
             self._markdown.update(self._content)
         if self._show_reasoning and self._reasoning_content:
             # If the stream was never opened (reasoning hidden), render the stored text now.
-            if self._reasoning_stream is None:
-                self._get_reasoning_markdown().update(self._reasoning_content)
+            if self._reasoning_stream is not None:
+                try:
+                    # Stop any stale stream to avoid double-writing.
+                    self._reasoning_stream.stop(no_wait=True)  # type: ignore[arg-type]
+                except Exception:
+                    pass
+                self._reasoning_stream = None
+            self._get_reasoning_markdown().update(self._reasoning_content)
 
 
 class UserCommandMessage(Static):
