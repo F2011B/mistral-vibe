@@ -264,3 +264,91 @@ async def test_llm_endpoint_calls_all_allowed_tools(monkeypatch: pytest.MonkeyPa
     second_calls = second_chunk.message.tool_calls or []
     assert second_calls, "Expected a grep tool call on follow-up"
     assert second_calls[0].function.name == "grep"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_bash_allowlist_commands(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure the model proposes POSIX/bash commands from the allowlist (no Windows built-ins)."""
+
+    api_base, adapter, tools, system_prompt, model_name, provider = _build_integration_context(
+        monkeypatch
+    )
+
+    commands = [
+        ("Use bash to run `pwd`.", ["pwd"], ["dir", "cd\\"]),
+        ("Use bash to run `ls -la`.", ["ls -la"], ["dir"]),
+        ("Use bash to run `find . -maxdepth 1`.", ["find . -maxdepth 1"], ["dir"]),
+        ("Use bash to run `git status`.", ["git status"], ["dir"]),
+    ]
+
+    for prompt, required, forbidden in commands:
+        await _send_and_assert(
+            api_base,
+            adapter,
+            tools,
+            system_prompt,
+            model_name,
+            provider,
+            prompt,
+            "bash",
+            required,
+            forbidden,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(30)
+async def test_bash_git_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ask for multiple bash tool calls (pwd, git status, git log -1) in a single turn."""
+
+    api_base, adapter, tools, system_prompt, model_name, provider = _build_integration_context(
+        monkeypatch
+    )
+
+    messages = [
+        LLMMessage(role=Role.system, content=system_prompt),
+        LLMMessage(
+            role=Role.user,
+            content=(
+                "Reply only with three bash tool calls in order: "
+                "1) bash command \"pwd\" "
+                "2) bash command \"git status\" "
+                "3) bash command \"git log -1\" "
+                "Do not include any assistant content."
+            ),
+        ),
+    ]
+
+    endpoint, headers, body = adapter.prepare_request(
+        model_name=model_name,
+        messages=messages,
+        temperature=0.0,
+        tools=tools,
+        max_tokens=256,
+        tool_choice="auto",
+        enable_streaming=False,
+        provider=provider,
+        api_key=None,
+    )
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"{api_base}{endpoint}", headers=headers, content=body
+            )
+        except httpx.RequestError as exc:  # pragma: no cover - env dependent
+            pytest.skip(f"LLM endpoint not reachable: {exc!r}")
+
+    if response.status_code >= 400:  # pragma: no cover - env dependent
+        pytest.skip(
+            f"LLM endpoint responded with {response.status_code} on chained call: {response.text}"
+        )
+
+    chunk = adapter.parse_response(response.json())
+    tool_calls = chunk.message.tool_calls or []
+    assert tool_calls, "Expected multiple bash tool calls"
+    assert all(tc.function.name == "bash" for tc in tool_calls)
+    args_combined = " ".join(tc.function.arguments or "" for tc in tool_calls).lower()
+    for fragment in ("pwd", "git status", "git log -1"):
+        assert fragment in args_combined, f"Missing fragment {fragment} in tool calls"
