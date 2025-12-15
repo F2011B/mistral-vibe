@@ -53,8 +53,14 @@ async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPat
     )
 
     tool_manager = ToolManager(config)
+    bash_cfg = config.tools["bash"]
+    assert isinstance(bash_cfg, BashToolConfig)
+    assert all(cmd not in bash_cfg.allowlist for cmd in ["dir", "findstr", "where"])
+    assert "ls" in " ".join(bash_cfg.allowlist)
     formatter = APIToolFormatHandler()
     tools = formatter.get_available_tools(tool_manager, config)
+    tool_names = {tool.function.name for tool in tools}
+    assert {"bash", "grep"}.issubset(tool_names)
 
     monkeypatch.setattr("vibe.core.system_prompt.is_windows", lambda: True)
     system_prompt = get_universal_system_prompt(tool_manager, config)
@@ -101,3 +107,10 @@ async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPat
 
     chunk = adapter.parse_response(response.json())
     assert chunk.message.role == Role.assistant
+    tool_calls = chunk.message.tool_calls or []
+    assert tool_calls, "Expected the model to trigger a tool call for listing files"
+    for tool_call in tool_calls:
+        assert tool_call.function.name == "bash"
+        args = (tool_call.function.arguments or "").lower()
+        assert "dir" not in args
+        assert "ls" in args or "find" in args
