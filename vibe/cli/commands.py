@@ -66,6 +66,11 @@ class CommandRegistry:
                 description="Configure bash tool to use Git Bash on Windows (adds grep support)",
                 handler="_configure_windows_shell",
             ),
+            "autoscroll": Command(
+                aliases=frozenset(["/autoscroll", "/scroll", "/scroll-follow"]),
+                description="Toggle chat auto-scroll (stick to bottom vs manual)",
+                handler="_toggle_auto_scroll",
+            ),
             "exit": Command(
                 aliases=frozenset(["/exit", "/quit", "/q"]),
                 description="Exit the application",

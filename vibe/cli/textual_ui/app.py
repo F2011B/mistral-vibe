@@ -90,6 +90,7 @@ class VibeApp(App):
         Binding(
             "shift+down", "scroll_chat_down", "Scroll Down", show=False, priority=True
         ),
+        Binding("ctrl+l", "toggle_autoscroll", "Toggle Auto-Scroll", show=False),
     ]
 
     def __init__(
@@ -147,6 +148,7 @@ class VibeApp(App):
         # completes exactly at the moment the user interrupts
         self._agent_init_interrupted = False
         self._auto_scroll = True
+        self._auto_scroll_locked = False
         self._show_reasoning = config.show_reasoning
 
     def compose(self) -> ComposeResult:
@@ -1127,6 +1129,14 @@ class VibeApp(App):
         status = "Reasoning shown" if self._show_reasoning else "Reasoning hidden"
         await self._mount_and_scroll(UserCommandMessage(status))
 
+    def action_toggle_autoscroll(self) -> None:
+        self._auto_scroll_locked = not self._auto_scroll_locked
+        self._auto_scroll = not self._auto_scroll_locked
+        state = "Auto-scroll enabled (following new messages)" if self._auto_scroll else "Auto-scroll disabled (manual scroll)"
+        self.run_worker(
+            self._mount_and_scroll(UserCommandMessage(state)), exclusive=False
+        )
+
     def action_cycle_mode(self) -> None:
         if self._current_bottom_app != BottomApp.Input:
             return
@@ -1167,6 +1177,7 @@ class VibeApp(App):
             chat = self.query_one("#chat", VerticalScroll)
             chat.scroll_relative(y=-5, animate=False)
             self._auto_scroll = False
+            self._auto_scroll_locked = True
         except Exception:
             pass
 
@@ -1174,7 +1185,7 @@ class VibeApp(App):
         try:
             chat = self.query_one("#chat", VerticalScroll)
             chat.scroll_relative(y=5, animate=False)
-            if self._is_scrolled_to_bottom(chat):
+            if self._is_scrolled_to_bottom(chat) and not self._auto_scroll_locked:
                 self._auto_scroll = True
         except Exception:
             pass
@@ -1253,7 +1264,8 @@ class VibeApp(App):
         except Exception:
             return
 
-        self._auto_scroll = self._is_scrolled_to_bottom(chat)
+        if not self._auto_scroll_locked:
+            self._auto_scroll = self._is_scrolled_to_bottom(chat)
 
     def on_mouse_scroll(self, event: events.MouseScroll) -> None:
         """Let users override auto-scroll when they manually scroll."""
