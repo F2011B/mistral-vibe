@@ -18,6 +18,7 @@ DEFAULT_INTEGRATION_URL = "http://192.168.178.60:1234"
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(30)
 async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     """Integration check against a live LLM endpoint for Git Bash prompts and tool calls."""
 
