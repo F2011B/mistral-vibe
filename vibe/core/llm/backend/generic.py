@@ -100,7 +100,7 @@ class OpenAIAdapter(APIAdapter):
     def _dump_message(
         self, message: LLMMessage, provider: ProviderConfig
     ) -> dict[str, Any]:
-        exclude = None if provider.name == "llamacpp" else {"reasoning_content"}
+        exclude = None if provider.send_reasoning_content else {"reasoning_content"}
         return message.model_dump(exclude_none=True, exclude=exclude)
 
     def build_headers(self, api_key: str | None = None) -> dict[str, str]:
