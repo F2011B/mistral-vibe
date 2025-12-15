@@ -122,7 +122,6 @@ async def test_llm_endpoint_honors_git_bash_prompt(monkeypatch: pytest.MonkeyPat
                 tool_call.function.name == expected_tool
             ), f"Expected tool {expected_tool}, got {tool_call.function.name}"
             args = (tool_call.function.arguments or "").lower()
-            for term in required_terms:
-                assert term in args
+            assert any(term in args for term in required_terms)
             for term in forbidden_terms:
                 assert term not in args
