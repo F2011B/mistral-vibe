@@ -180,8 +180,10 @@ async def test_llm_endpoint_calls_all_allowed_tools(monkeypatch: pytest.MonkeyPa
         LLMMessage(
             role=Role.user,
             content=(
-                "First list files using the bash tool, then search recursively for TODO using the grep tool. "
-                "Produce both tool calls in order."
+                "Your next message must include two tool calls in order: "
+                "1) call the bash tool with command \"ls -la\" "
+                "2) call the grep tool with pattern \"TODO\" and path \".\" "
+                "Do not include any assistant content or reasoning, only the tool calls."
             ),
         ),
     ]
