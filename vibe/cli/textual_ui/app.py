@@ -15,7 +15,7 @@ from textual.events import MouseUp
 from textual.widget import Widget
 from textual.widgets import Static
 
-from vibe.cli.clipboard import copy_selection_to_clipboard
+from vibe.cli.clipboard import copy_selection_to_clipboard, copy_text_to_clipboard
 from vibe.cli.commands import CommandRegistry
 from vibe.cli.textual_ui.handlers.event_handler import EventHandler
 from vibe.cli.textual_ui.widgets.approval_app import ApprovalApp
@@ -90,6 +90,13 @@ class VibeApp(App):
         Binding("ctrl+p", "add_provider", "Add Provider", show=False),
         Binding("ctrl+m", "add_model", "Add Model", show=False),
         Binding("shift+tab", "cycle_mode", "Cycle Mode", show=False, priority=True),
+        Binding(
+            "ctrl+k",
+            "copy_llm_exchanges",
+            "Copy LLM exchanges",
+            show=False,
+            priority=True,
+        ),
         Binding("shift+up", "scroll_chat_up", "Scroll Up", show=False, priority=True),
         Binding(
             "shift+down", "scroll_chat_down", "Scroll Down", show=False, priority=True
@@ -798,6 +805,26 @@ class VibeApp(App):
         if model is None:
             return
         await self._apply_model(model)
+
+    def action_copy_llm_exchanges(self) -> None:
+        if not self.agent:
+            self.notify("Agent not initialized yet.", severity="warning", timeout=3)
+            return
+
+        recorder = self.agent.exchange_recorder
+        if not recorder.recent_exchanges():
+            self.notify(
+                "No LLM exchanges recorded yet.",
+                severity="information",
+                timeout=3,
+            )
+            return
+
+        payload = recorder.render_recent_for_clipboard()
+        if copy_text_to_clipboard(self, payload, "LLM exchanges (last 2)"):
+            return
+
+        self.notify("Failed to copy LLM exchanges.", severity="warning", timeout=3)
 
     async def _apply_provider_draft(self, draft: ProviderDraft) -> None:
         provider = draft.provider
