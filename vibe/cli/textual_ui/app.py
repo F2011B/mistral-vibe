@@ -629,8 +629,21 @@ class VibeApp(App):
                 await self._loading_widget.remove()
             if self.event_handler:
                 self.event_handler.stop_current_tool_call()
+            debug_payload = None
+            if self.agent:
+                try:
+                    recorder = self.agent.exchange_recorder
+                    if recorder.recent_exchanges():
+                        debug_payload = recorder.render_recent_for_clipboard()
+                        logger.error("Recent LLM exchanges:\n%s", debug_payload)
+                except Exception as exc:
+                    logger.debug("Failed to capture LLM exchange log", exc_info=exc)
             await self._mount_and_scroll(
-                ErrorMessage(str(e), collapsed=self._tools_collapsed)
+                ErrorMessage(
+                    str(e),
+                    collapsed=self._tools_collapsed,
+                    debug_payload=debug_payload,
+                )
             )
         finally:
             self._agent_running = False

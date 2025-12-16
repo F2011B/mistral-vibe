@@ -15,6 +15,7 @@ from vibe.core.config import VibeConfig
 from vibe.core.interaction_logger import InteractionLogger
 from vibe.core.llm.backend.factory import BACKEND_FACTORY
 from vibe.core.llm.format import APIToolFormatHandler, ResolvedMessage
+from vibe.core.llm.recorder import LLMExchangeRecorder
 from vibe.core.llm.types import BackendLike
 from vibe.core.middleware import (
     AutoCompactMiddleware,
@@ -60,6 +61,7 @@ from vibe.core.utils import (
     get_user_agent,
     get_user_cancellation_message,
     is_user_cancellation_event,
+    logger,
 )
 
 EMPTY_RESPONSE_FALLBACK = "No response body returned from the model."
@@ -106,8 +108,10 @@ class Agent:
         self.tool_manager = ToolManager(config)
         self.format_handler = APIToolFormatHandler()
 
+        self.exchange_recorder = LLMExchangeRecorder()
         self.backend_factory = lambda: backend or self._select_backend()
         self.backend = self.backend_factory()
+        self._attach_exchange_recorder(self.backend)
 
         self.message_observer = message_observer
         self._last_observed_message_index: int = 0
@@ -151,7 +155,20 @@ class Agent:
         active_model = self.config.get_active_model()
         provider = self.config.get_provider_for_model(active_model)
         timeout = self.config.api_timeout
-        return BACKEND_FACTORY[provider.backend](provider=provider, timeout=timeout)
+        return BACKEND_FACTORY[provider.backend](
+            provider=provider,
+            timeout=timeout,
+            exchange_recorder=self.exchange_recorder,
+        )
+
+    def _attach_exchange_recorder(self, backend: BackendLike | object) -> None:
+        setter = getattr(backend, "set_exchange_recorder", None)
+        if not callable(setter):
+            return
+        try:
+            setter(self.exchange_recorder)
+        except Exception:
+            return
 
     def add_message(self, message: LLMMessage) -> None:
         self.messages.append(message)
@@ -924,6 +941,14 @@ class Agent:
     def set_approval_callback(self, callback: ApprovalCallback) -> None:
         self.approval_callback = callback
 
+    def get_recent_llm_exchanges(self, count: int = 2) -> str:
+        return self.exchange_recorder.render_recent_for_clipboard(count)
+
+    def log_recent_llm_exchanges(self, count: int = 2) -> str:
+        payload = self.get_recent_llm_exchanges(count)
+        logger.error("Recent LLM exchanges:\n%s", payload)
+        return payload
+
     def _tool_call_signature(self, tool_call: ResolvedToolCall) -> tuple[str, str]:
         return (
             tool_call.tool_name,
@@ -1042,6 +1067,7 @@ class Agent:
         if config is not None:
             self.config = config
             self.backend = self.backend_factory()
+            self._attach_exchange_recorder(self.backend)
 
         self.tool_manager = ToolManager(self.config)
 

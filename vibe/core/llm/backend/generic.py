@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Protocol, TypeVar
 import httpx
 
 from vibe.core.llm.exceptions import BackendErrorBuilder
+from vibe.core.llm.recorder import LLMExchange, LLMExchangeRecorder
 from vibe.core.types import (
     AvailableTool,
     LLMChunk,
@@ -179,6 +180,7 @@ class GenericBackend:
         client: httpx.AsyncClient | None = None,
         provider: ProviderConfig,
         timeout: float = 720.0,
+        exchange_recorder: LLMExchangeRecorder | None = None,
     ) -> None:
         """Initialize the backend.
 
@@ -189,6 +191,7 @@ class GenericBackend:
         self._owns_client = client is None
         self._provider = provider
         self._timeout = timeout
+        self._exchange_recorder = exchange_recorder
 
     async def __aenter__(self) -> GenericBackend:
         if self._client is None:
@@ -214,8 +217,22 @@ class GenericBackend:
                 timeout=httpx.Timeout(self._timeout),
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             )
-            self._owns_client = True
+        self._owns_client = True
         return self._client
+
+    def set_exchange_recorder(
+        self, exchange_recorder: LLMExchangeRecorder | None
+    ) -> None:
+        self._exchange_recorder = exchange_recorder
+
+    def _start_exchange(
+        self, *, url: str, headers: dict[str, str], body: bytes, streaming: bool
+    ) -> LLMExchange | None:
+        if not self._exchange_recorder:
+            return None
+        return self._exchange_recorder.start_exchange(
+            url=url, headers=headers, body=body, streaming=streaming
+        )
 
     async def complete(
         self,
@@ -253,12 +270,32 @@ class GenericBackend:
             headers.update(extra_headers)
 
         url = f"{self._provider.api_base}{endpoint}"
+        exchange = self._start_exchange(
+            url=url, headers=headers, body=body, streaming=False
+        )
 
         try:
-            res_data, _ = await self._make_request(url, body, headers)
+            res_data, response_headers = await self._make_request(url, body, headers)
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.add_response(
+                    exchange, res_data, response_headers
+                )
             return adapter.parse_response(res_data)
 
         except httpx.HTTPStatusError as e:
+            if exchange and self._exchange_recorder:
+                try:
+                    error_body = e.response.text
+                except Exception:
+                    error_body = None
+                if error_body is not None:
+                    self._exchange_recorder.add_response(
+                        exchange,
+                        error_body,
+                        dict(e.response.headers.items()),
+                        is_error=True,
+                    )
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_http_error(
                 provider=self._provider.name,
                 endpoint=url,
@@ -271,6 +308,8 @@ class GenericBackend:
                 tool_choice=tool_choice,
             ) from e
         except httpx.RequestError as e:
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_request_error(
                 provider=self._provider.name,
                 endpoint=url,
@@ -318,12 +357,30 @@ class GenericBackend:
             headers.update(extra_headers)
 
         url = f"{self._provider.api_base}{endpoint}"
+        exchange = self._start_exchange(
+            url=url, headers=headers, body=body, streaming=True
+        )
 
         try:
-            async for res_data in self._make_streaming_request(url, body, headers):
+            async for res_data in self._make_streaming_request(
+                url, body, headers, exchange
+            ):
                 yield adapter.parse_response(res_data)
 
         except httpx.HTTPStatusError as e:
+            if exchange and self._exchange_recorder:
+                try:
+                    error_body = e.response.text
+                except Exception:
+                    error_body = None
+                if error_body is not None:
+                    self._exchange_recorder.add_response(
+                        exchange,
+                        error_body,
+                        dict(e.response.headers.items()),
+                        is_error=True,
+                    )
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_http_error(
                 provider=self._provider.name,
                 endpoint=url,
@@ -336,6 +393,8 @@ class GenericBackend:
                 tool_choice=tool_choice,
             ) from e
         except httpx.RequestError as e:
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_request_error(
                 provider=self._provider.name,
                 endpoint=url,
@@ -365,13 +424,23 @@ class GenericBackend:
 
     @async_generator_retry(tries=3)
     async def _make_streaming_request(
-        self, url: str, data: bytes, headers: dict[str, str]
+        self,
+        url: str,
+        data: bytes,
+        headers: dict[str, str],
+        exchange: LLMExchange | None = None,
     ) -> AsyncGenerator[dict[str, Any]]:
         client = self._get_client()
         async with client.stream(
             method="POST", url=url, content=data, headers=headers
         ) as response:
             response.raise_for_status()
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.add_response(
+                    exchange,
+                    {"status": response.status_code},
+                    dict(response.headers.items()),
+                )
             async for line in response.aiter_lines():
                 if line.strip() == "":
                     continue
@@ -385,6 +454,8 @@ class GenericBackend:
                 if key != "data":
                     # This might be the case with openrouter, so we just ignore it
                     continue
+                if exchange and self._exchange_recorder and value != "[DONE]":
+                    self._exchange_recorder.add_response(exchange, value)
                 if value == "[DONE]":
                     return
                 yield json.loads(value.strip())

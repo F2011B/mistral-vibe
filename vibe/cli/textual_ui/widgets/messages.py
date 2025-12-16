@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Markdown, Static
+from textual.widgets import Markdown, Static, Switch
 from textual.widgets._markdown import MarkdownStream
+
+from vibe.cli.clipboard import copy_text_to_clipboard
 
 
 class UserMessage(Static):
@@ -213,25 +215,51 @@ class BashOutputMessage(Static):
 
 
 class ErrorMessage(Static):
-    def __init__(self, error: str, collapsed: bool = True) -> None:
+    def __init__(
+        self, error: str, collapsed: bool = True, debug_payload: str | None = None
+    ) -> None:
         super().__init__(classes="error-message")
         self._error = error
+        self._debug_payload = debug_payload
         self.collapsed = collapsed
+        self._label: Static | None = None
 
     def compose(self) -> ComposeResult:
-        if self.collapsed:
-            yield Static("Error. (ctrl+o to expand)", markup=False)
-        else:
-            yield Static(f"Error: {self._error}", markup=False)
+        label_text = (
+            "Error. (ctrl+o to expand)"
+            if self.collapsed
+            else f"Error: {self._error}"
+        )
+        label = Static(label_text, markup=False)
+        self._label = label
+        yield label
+
+        if self._debug_payload:
+            with Horizontal(classes="error-debug-controls"):
+                yield Static("Copy last LLM exchanges", markup=False)
+                yield Switch(value=False, id="copy-llm-exchanges")
 
     def set_collapsed(self, collapsed: bool) -> None:
         if self.collapsed == collapsed:
             return
 
         self.collapsed = collapsed
-        self.remove_children()
+        if self._label is None:
+            return
 
-        if self.collapsed:
-            self.mount(Static("Error. (ctrl+o to expand)", markup=False))
-        else:
-            self.mount(Static(f"Error: {self._error}", markup=False))
+        text = (
+            "Error. (ctrl+o to expand)" if self.collapsed else f"Error: {self._error}"
+        )
+        self._label.update(text)
+
+    async def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id != "copy-llm-exchanges":
+            return
+
+        if not event.value or not self._debug_payload:
+            return
+
+        if copy_text_to_clipboard(
+            self.app, self._debug_payload, "LLM exchanges (last 2)"
+        ):
+            event.switch.value = False

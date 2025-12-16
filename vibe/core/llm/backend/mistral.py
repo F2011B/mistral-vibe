@@ -5,12 +5,13 @@ import json
 import os
 import re
 import types
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import mistralai
 
 from vibe.core.llm.exceptions import BackendErrorBuilder
+from vibe.core.llm.recorder import LLMExchange, LLMExchangeRecorder
 from vibe.core.types import (
     AvailableTool,
     Content,
@@ -112,7 +113,12 @@ class MistralMapper:
 
 
 class MistralBackend:
-    def __init__(self, provider: ProviderConfig, timeout: float = 720.0) -> None:
+    def __init__(
+        self,
+        provider: ProviderConfig,
+        timeout: float = 720.0,
+        exchange_recorder: LLMExchangeRecorder | None = None,
+    ) -> None:
         self._client: mistralai.Mistral | None = None
         self._provider = provider
         self._mapper = MistralMapper()
@@ -121,6 +127,7 @@ class MistralBackend:
             if self._provider.api_key_env_var
             else None
         )
+        self._exchange_recorder = exchange_recorder
 
         # Mistral SDK takes server URL without api version as input
         url_pattern = r"(https?://[^/]+)(/v.*)"
@@ -132,6 +139,7 @@ class MistralBackend:
             )
         self._server_url = match.group(1)
         self._timeout = timeout
+        self._chat_endpoint = f"{self._provider.api_base}/chat/completions"
 
     async def __aenter__(self) -> MistralBackend:
         self._client = mistralai.Mistral(
@@ -160,6 +168,37 @@ class MistralBackend:
             )
         return self._client
 
+    def set_exchange_recorder(
+        self, exchange_recorder: LLMExchangeRecorder | None
+    ) -> None:
+        self._exchange_recorder = exchange_recorder
+
+    def _start_exchange(
+        self,
+        *,
+        headers: dict[str, str] | None,
+        payload: dict[str, Any],
+        streaming: bool,
+    ) -> LLMExchange | None:
+        if not self._exchange_recorder:
+            return None
+        return self._exchange_recorder.start_exchange(
+            url=self._chat_endpoint,
+            headers=headers or {},
+            body=payload,
+            streaming=streaming,
+        )
+
+    def _serialize(self, payload: object) -> dict[str, Any] | str:
+        try:
+            if hasattr(payload, "model_dump"):
+                return cast(dict[str, Any], payload.model_dump())
+            if hasattr(payload, "dict"):
+                return cast(dict[str, Any], payload.dict())
+        except Exception:
+            pass
+        return repr(payload)
+
     async def complete(
         self,
         *,
@@ -171,6 +210,23 @@ class MistralBackend:
         tool_choice: StrToolChoice | AvailableTool | None,
         extra_headers: dict[str, str] | None,
     ) -> LLMChunk:
+        request_snapshot = {
+            "model": model.name,
+            "messages": [msg.model_dump(exclude_none=True) for msg in messages],
+            "temperature": temperature,
+            "tools": [tool.model_dump(exclude_none=True) for tool in tools]
+            if tools
+            else None,
+            "max_tokens": max_tokens,
+            "tool_choice": (
+                tool_choice.model_dump()
+                if tool_choice and not isinstance(tool_choice, str)
+                else tool_choice
+            ),
+        }
+        exchange = self._start_exchange(
+            headers=extra_headers, payload=request_snapshot, streaming=False
+        )
         try:
             response = await self._get_client().chat.complete_async(
                 model=model.name,
@@ -186,6 +242,13 @@ class MistralBackend:
                 http_headers=extra_headers,
                 stream=False,
             )
+            if exchange and self._exchange_recorder:
+                try:
+                    self._exchange_recorder.add_response(
+                        exchange, self._serialize(response)
+                    )
+                except Exception:
+                    pass
 
             return LLMChunk(
                 message=LLMMessage(
@@ -209,6 +272,20 @@ class MistralBackend:
             )
 
         except mistralai.SDKError as e:
+            if exchange and self._exchange_recorder:
+                try:
+                    raw_response = self._serialize(e.raw_response)
+                    self._exchange_recorder.add_response(
+                        exchange,
+                        raw_response,
+                        dict(e.raw_response.headers.items())
+                        if getattr(e, "raw_response", None)
+                        else None,
+                        is_error=True,
+                    )
+                except Exception:
+                    pass
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_http_error(
                 provider=self._provider.name,
                 endpoint=self._server_url,
@@ -221,6 +298,8 @@ class MistralBackend:
                 tool_choice=tool_choice,
             ) from e
         except httpx.RequestError as e:
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_request_error(
                 provider=self._provider.name,
                 endpoint=self._server_url,
@@ -243,6 +322,23 @@ class MistralBackend:
         tool_choice: StrToolChoice | AvailableTool | None,
         extra_headers: dict[str, str] | None,
     ) -> AsyncGenerator[LLMChunk, None]:
+        request_snapshot = {
+            "model": model.name,
+            "messages": [msg.model_dump(exclude_none=True) for msg in messages],
+            "temperature": temperature,
+            "tools": [tool.model_dump(exclude_none=True) for tool in tools]
+            if tools
+            else None,
+            "max_tokens": max_tokens,
+            "tool_choice": (
+                tool_choice.model_dump()
+                if tool_choice and not isinstance(tool_choice, str)
+                else tool_choice
+            ),
+        }
+        exchange = self._start_exchange(
+            headers=extra_headers, payload=request_snapshot, streaming=True
+        )
         try:
             async for chunk in await self._get_client().chat.stream_async(
                 model=model.name,
@@ -257,6 +353,13 @@ class MistralBackend:
                 else None,
                 http_headers=extra_headers,
             ):
+                if exchange and self._exchange_recorder:
+                    try:
+                        self._exchange_recorder.add_response(
+                            exchange, self._serialize(chunk.data)
+                        )
+                    except Exception:
+                        pass
                 yield LLMChunk(
                     message=LLMMessage(
                         role=Role.assistant,
@@ -283,6 +386,20 @@ class MistralBackend:
                 )
 
         except mistralai.SDKError as e:
+            if exchange and self._exchange_recorder:
+                try:
+                    raw_response = self._serialize(e.raw_response)
+                    self._exchange_recorder.add_response(
+                        exchange,
+                        raw_response,
+                        dict(e.raw_response.headers.items())
+                        if getattr(e, "raw_response", None)
+                        else None,
+                        is_error=True,
+                    )
+                except Exception:
+                    pass
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_http_error(
                 provider=self._provider.name,
                 endpoint=self._server_url,
@@ -295,6 +412,8 @@ class MistralBackend:
                 tool_choice=tool_choice,
             ) from e
         except httpx.RequestError as e:
+            if exchange and self._exchange_recorder:
+                self._exchange_recorder.record_error(exchange, e)
             raise BackendErrorBuilder.build_request_error(
                 provider=self._provider.name,
                 endpoint=self._server_url,

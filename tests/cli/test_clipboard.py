@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 from textual.app import App
 
-from vibe.cli.clipboard import _copy_osc52, copy_selection_to_clipboard
+from vibe.cli.clipboard import (
+    _copy_osc52,
+    copy_selection_to_clipboard,
+    copy_text_to_clipboard,
+)
 
 
 class MockWidget:
@@ -226,3 +230,26 @@ def test_copy_osc52_writes_correct_sequence(
     handle = mock_file()
     handle.write.assert_called_once_with(expected_seq)
     handle.flush.assert_called_once()
+
+
+@patch("vibe.cli.clipboard._copy_osc52")
+@patch("vibe.cli.clipboard.pyperclip.copy")
+def test_copy_text_to_clipboard_with_preview_label(
+    mock_pyperclip_copy: MagicMock, mock_osc52_copy: MagicMock, mock_app: MagicMock
+) -> None:
+    result = copy_text_to_clipboard(mock_app, "debug body", preview_label="debug log")
+
+    assert result is True
+    mock_osc52_copy.assert_called_once_with("debug body")
+    mock_pyperclip_copy.assert_not_called()
+    mock_app.copy_to_clipboard.assert_not_called()
+    mock_app.notify.assert_called_once()
+    notify_message = mock_app.notify.call_args[0][0]
+    assert '"debug log"' in notify_message
+
+
+def test_copy_text_to_clipboard_empty_text_returns_false(mock_app: MagicMock) -> None:
+    result = copy_text_to_clipboard(mock_app, "")
+
+    assert result is False
+    mock_app.notify.assert_not_called()

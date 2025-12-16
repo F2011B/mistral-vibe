@@ -36,6 +36,7 @@ from vibe.core.llm.backend.factory import BACKEND_FACTORY
 from vibe.core.llm.backend.generic import GenericBackend
 from vibe.core.llm.backend.mistral import MistralBackend
 from vibe.core.llm.exceptions import BackendError
+from vibe.core.llm.recorder import LLMExchangeRecorder
 from vibe.core.llm.types import BackendLike
 from vibe.core.types import LLMChunk, LLMMessage, Role, ToolCall
 from vibe.core.utils import get_user_agent
@@ -398,3 +399,69 @@ class TestBackend:
                 pass
 
             assert mock_api.calls.last.request.headers["user-agent"] == user_agent
+
+    @pytest.mark.asyncio
+    async def test_backend_records_llm_exchanges(self) -> None:
+        base_url = "https://api.example.com"
+        json_response = {
+            "id": "fake_id_1234",
+            "created": 1234567890,
+            "model": "devstral-latest",
+            "usage": {
+                "prompt_tokens": 100,
+                "total_tokens": 300,
+                "completion_tokens": 200,
+            },
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": None,
+                        "content": "Hello from the model",
+                    },
+                }
+            ],
+        }
+
+        with respx.mock(base_url=base_url) as mock_api:
+            mock_api.post("/v1/chat/completions").mock(
+                return_value=httpx.Response(status_code=200, json=json_response)
+            )
+
+            provider = ProviderConfig(
+                name="provider_name",
+                api_base=f"{base_url}/v1",
+                api_key_env_var="API_KEY",
+            )
+            recorder = LLMExchangeRecorder()
+            backend = GenericBackend(
+                provider=provider, exchange_recorder=recorder, timeout=10
+            )
+            model = ModelConfig(
+                name="model_name", provider="provider_name", alias="model_alias"
+            )
+            messages = [LLMMessage(role=Role.user, content="Record this payload")]
+
+            await backend.complete(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+                tools=None,
+                max_tokens=None,
+                tool_choice=None,
+                extra_headers={
+                    "Authorization": "Bearer secret",
+                    "X-Debug-Header": "keep-me",
+                },
+            )
+
+        dump = recorder.render_recent_for_clipboard()
+        assert "Record this payload" in dump
+        assert "Hello from the model" in dump
+        assert "<redacted>" in dump
+        assert "Bearer secret" not in dump
+        assert "X-Debug-Header" in dump
+        assert recorder.recent_exchanges()
