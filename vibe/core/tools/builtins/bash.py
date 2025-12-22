@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-import signal
-import sys
-from typing import ClassVar, Literal, final
+from typing import ClassVar, final
 
 from pydantic import BaseModel, Field
 
@@ -16,116 +14,15 @@ from vibe.core.tools.base import (
     ToolError,
     ToolPermission,
 )
-from vibe.core.utils import is_windows
-
-
-def _get_subprocess_encoding() -> str:
-    if sys.platform == "win32":
-        # Windows console uses OEM code page (e.g., cp850, cp1252)
-        import ctypes
-
-        return f"cp{ctypes.windll.kernel32.GetOEMCP()}"
-    return "utf-8"
-
-
-def _get_base_env() -> dict[str, str]:
-    base_env = {
-        **os.environ,
-        "CI": "true",
-        "NONINTERACTIVE": "1",
-        "NO_TTY": "1",
-        "NO_COLOR": "1",
-    }
-
-    if is_windows():
-        base_env["GIT_PAGER"] = "more"
-        base_env["PAGER"] = "more"
-    else:
-        base_env["TERM"] = "dumb"
-        base_env["DEBIAN_FRONTEND"] = "noninteractive"
-        base_env["GIT_PAGER"] = "cat"
-        base_env["PAGER"] = "cat"
-        base_env["LESS"] = "-FX"
-        base_env["LC_ALL"] = "en_US.UTF-8"
-
-    return base_env
-
-
-async def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
-
-    try:
-        if sys.platform == "win32":
-            try:
-                subprocess_proc = await asyncio.create_subprocess_exec(
-                    "taskkill",
-                    "/F",
-                    "/T",
-                    "/PID",
-                    str(proc.pid),
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await subprocess_proc.wait()
-            except (FileNotFoundError, OSError):
-                proc.terminate()
-        else:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-
-        await proc.wait()
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-
-
-def _get_default_allowlist() -> list[str]:
-    common = ["echo", "find", "git diff", "git log", "git status", "tree", "whoami"]
-
-    if is_windows():
-        return common + ["dir", "findstr", "more", "type", "ver", "where"]
-    else:
-        return common + [
-            "cat",
-            "file",
-            "head",
-            "ls",
-            "pwd",
-            "stat",
-            "tail",
-            "uname",
-            "wc",
-            "which",
-        ]
-
-
-def _get_default_denylist() -> list[str]:
-    common = ["gdb", "pdb", "passwd"]
-
-    if is_windows():
-        return common + ["cmd /k", "powershell -NoExit", "pwsh -NoExit", "notepad"]
-    else:
-        return common + [
-            "nano",
-            "vim",
-            "vi",
-            "emacs",
-            "bash -i",
-            "sh -i",
-            "zsh -i",
-            "fish -i",
-            "dash -i",
-            "screen",
-            "tmux",
-        ]
-
-
-def _get_default_denylist_standalone() -> list[str]:
-    common = ["python", "python3", "ipython"]
-
-    if is_windows():
-        return common + ["cmd", "powershell", "pwsh", "notepad"]
-    else:
-        return common + ["bash", "sh", "nohup", "vi", "vim", "emacs", "nano", "su"]
+from vibe.core.tools.builtins.bash_platform import (
+    get_base_env,
+    get_default_allowlist,
+    get_default_denylist,
+    get_default_denylist_standalone,
+    get_subprocess_encoding,
+    get_subprocess_kwargs,
+    kill_process_tree,
+)
 
 
 class BashToolConfig(BaseToolConfig):
@@ -137,15 +34,15 @@ class BashToolConfig(BaseToolConfig):
         default=30, description="Default timeout for commands in seconds."
     )
     allowlist: list[str] = Field(
-        default_factory=_get_default_allowlist,
+        default_factory=get_default_allowlist,
         description="Command prefixes that are automatically allowed",
     )
     denylist: list[str] = Field(
-        default_factory=_get_default_denylist,
+        default_factory=get_default_denylist,
         description="Command prefixes that are automatically denied",
     )
     denylist_standalone: list[str] = Field(
-        default_factory=_get_default_denylist_standalone,
+        default_factory=get_default_denylist_standalone,
         description="Commands that are denied only when run without arguments",
     )
 
@@ -232,10 +129,7 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
 
         proc = None
         try:
-            # start_new_session is Unix-only, on Windows it's ignored
-            kwargs: dict[Literal["start_new_session"], bool] = (
-                {} if is_windows() else {"start_new_session": True}
-            )
+            proc_kwargs = get_subprocess_kwargs()
 
             proc = await asyncio.create_subprocess_shell(
                 args.command,
@@ -243,8 +137,8 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=self.config.effective_workdir,
-                env=_get_base_env(),
-                **kwargs,
+                env=get_base_env(),
+                **proc_kwargs,
             )
 
             try:
@@ -252,10 +146,10 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
                     proc.communicate(), timeout=timeout
                 )
             except TimeoutError:
-                await _kill_process_tree(proc)
+                await kill_process_tree(proc)
                 raise self._build_timeout_error(args.command, timeout)
 
-            encoding = _get_subprocess_encoding()
+            encoding = get_subprocess_encoding()
             stdout = (
                 stdout_bytes.decode(encoding, errors="replace")[:max_bytes]
                 if stdout_bytes
@@ -282,4 +176,4 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
             raise ToolError(f"Error running command {args.command!r}: {exc}") from exc
         finally:
             if proc is not None:
-                await _kill_process_tree(proc)
+                await kill_process_tree(proc)

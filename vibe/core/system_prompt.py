@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Generator
 import fnmatch
 import html
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,9 +11,10 @@ from typing import TYPE_CHECKING
 
 from vibe.core.config import PROJECT_DOC_FILENAMES
 from vibe.core.llm.format import get_active_tool_classes
+from vibe.core.platform import get_os_system_prompt, get_subprocess_stdin
 from vibe.core.paths.config_paths import INSTRUCTIONS_FILE
 from vibe.core.prompts import UtilityPrompt
-from vibe.core.utils import is_dangerous_directory, is_windows
+from vibe.core.utils import is_dangerous_directory
 
 if TYPE_CHECKING:
     from vibe.core.config import ProjectContextConfig, VibeConfig
@@ -204,13 +204,14 @@ class ProjectContextProvider:
         try:
             timeout = min(self.config.timeout_seconds, 10.0)
             num_commits = self.config.default_commit_count
+            stdin = get_subprocess_stdin()
 
             current_branch = subprocess.run(
                 ["git", "branch", "--show-current"],
                 capture_output=True,
                 check=True,
                 cwd=self.root_path,
-                stdin=subprocess.DEVNULL if is_windows() else None,
+                stdin=stdin,
                 text=True,
                 timeout=timeout,
             ).stdout.strip()
@@ -222,7 +223,7 @@ class ProjectContextProvider:
                     capture_output=True,
                     check=True,
                     cwd=self.root_path,
-                    stdin=subprocess.DEVNULL if is_windows() else None,
+                    stdin=stdin,
                     text=True,
                     timeout=timeout,
                 ).stdout
@@ -236,7 +237,7 @@ class ProjectContextProvider:
                 capture_output=True,
                 check=True,
                 cwd=self.root_path,
-                stdin=subprocess.DEVNULL if is_windows() else None,
+                stdin=stdin,
                 text=True,
                 timeout=timeout,
             ).stdout.strip()
@@ -258,7 +259,7 @@ class ProjectContextProvider:
                 capture_output=True,
                 check=True,
                 cwd=self.root_path,
-                stdin=subprocess.DEVNULL if is_windows() else None,
+                stdin=stdin,
                 text=True,
                 timeout=timeout,
             ).stdout.strip()
@@ -319,51 +320,6 @@ class ProjectContextProvider:
         )
 
 
-def _get_platform_name() -> str:
-    platform_names = {
-        "win32": "Windows",
-        "darwin": "macOS",
-        "linux": "Linux",
-        "freebsd": "FreeBSD",
-        "openbsd": "OpenBSD",
-        "netbsd": "NetBSD",
-    }
-    return platform_names.get(sys.platform, "Unix-like")
-
-
-def _get_default_shell() -> str:
-    """Get the default shell used by asyncio.create_subprocess_shell.
-
-    On Unix, this is always 'sh'.
-    On Windows, this is COMSPEC or cmd.exe.
-    """
-    if is_windows():
-        return os.environ.get("COMSPEC", "cmd.exe")
-    return "sh"
-
-
-def _get_os_system_prompt() -> str:
-    shell = _get_default_shell()
-    platform_name = _get_platform_name()
-    prompt = f"The operating system is {platform_name} with shell `{shell}`"
-
-    if is_windows():
-        prompt += "\n" + _get_windows_system_prompt()
-    return prompt
-
-
-def _get_windows_system_prompt() -> str:
-    return (
-        "### COMMAND COMPATIBILITY RULES (MUST FOLLOW):\n"
-        "- DO NOT use Unix commands like `ls`, `grep`, `cat` - they won't work on Windows\n"
-        "- Use: `dir` (Windows) for directory listings\n"
-        "- Use: backslashes (\\\\) for paths\n"
-        "- Check command availability with: `where command` (Windows)\n"
-        "- Script shebang: Not applicable on Windows\n"
-        "### ALWAYS verify commands work on the detected platform before suggesting them"
-    )
-
-
 def _add_commit_signature() -> str:
     return (
         "When you want to commit changes, you will always use the 'git commit' bash command.\n"
@@ -422,7 +378,7 @@ def get_universal_system_prompt(
         sections.append(f"Your model name is: `{config.active_model}`")
 
     if config.include_prompt_detail:
-        sections.append(_get_os_system_prompt())
+        sections.append(get_os_system_prompt())
         tool_prompts = []
         active_tools = get_active_tool_classes(tool_manager, config)
         for tool_class in active_tools:
