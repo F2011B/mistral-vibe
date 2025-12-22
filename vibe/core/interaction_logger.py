@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any
 import aiofiles
 
 from vibe.core.llm.format import get_active_tool_classes
+from vibe.core.platform import get_subprocess_stdin
 from vibe.core.types import AgentStats, LLMMessage, SessionInfo, SessionMetadata
-from vibe.core.utils import is_windows
 
 if TYPE_CHECKING:
     from vibe.core.config import SessionLoggingConfig, VibeConfig
@@ -65,7 +65,7 @@ class InteractionLogger:
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True,
                 cwd=self.workdir,
-                stdin=subprocess.DEVNULL if is_windows() else None,
+                stdin=get_subprocess_stdin(),
                 text=True,
                 timeout=5.0,
             )
@@ -81,7 +81,7 @@ class InteractionLogger:
                 ["git", "rev-parse", "--abbrev-ref", "HEAD"],
                 capture_output=True,
                 cwd=self.workdir,
-                stdin=subprocess.DEVNULL if is_windows() else None,
+                stdin=get_subprocess_stdin(),
                 text=True,
                 timeout=5.0,
             )

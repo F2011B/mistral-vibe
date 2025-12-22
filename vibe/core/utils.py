@@ -16,6 +16,7 @@ import httpx
 from vibe import __version__
 from vibe.core.config import Backend
 from vibe.core.paths.global_paths import LOG_DIR, LOG_FILE
+from vibe.core.platform import is_windows as platform_is_windows
 from vibe.core.types import BaseEvent, ToolResultEvent
 
 CANCELLATION_TAG = "user_cancellation"
@@ -272,4 +273,4 @@ def run_sync[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 def is_windows() -> bool:
-    return sys.platform == "win32"
+    return platform_is_windows()
