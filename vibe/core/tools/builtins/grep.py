@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from enum import StrEnum, auto
 from pathlib import Path
-import shutil
 from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, Field
@@ -15,6 +14,7 @@ from vibe.core.tools.base import (
     ToolError,
     ToolPermission,
 )
+from vibe.core.tools.builtins import grep_platform
 from vibe.core.tools.ui import ToolCallDisplay, ToolResultDisplay, ToolUIData
 
 if TYPE_CHECKING:
@@ -104,24 +104,33 @@ class Grep(
         "Respects .gitignore and .codeignore files by default when using ripgrep."
     )
 
-    def _detect_backend(self) -> GrepBackend:
-        if shutil.which("rg"):
-            return GrepBackend.RIPGREP
-        if shutil.which("grep"):
-            return GrepBackend.GNU_GREP
-        raise ToolError(
-            "Neither ripgrep (rg) nor grep is installed. "
-            "Please install ripgrep: https://github.com/BurntSushi/ripgrep#installation"
-        )
+    def _resolve_backend(
+        self, plan: grep_platform.GrepExecutionPlan
+    ) -> GrepBackend:
+        match plan.backend:
+            case "rg":
+                return GrepBackend.RIPGREP
+            case "grep":
+                return GrepBackend.GNU_GREP
+            case None:
+                raise ToolError(
+                    "Neither ripgrep (rg) nor grep is installed. "
+                    "Please install ripgrep: https://github.com/BurntSushi/ripgrep#installation"
+                )
+            case _:
+                raise ToolError(f"Unsupported grep backend: {plan.backend}")
 
     async def run(self, args: GrepArgs) -> GrepResult:
-        backend = self._detect_backend()
+        plan = grep_platform.get_execution_plan()
+        backend = self._resolve_backend(plan)
         self._validate_args(args)
         self.state.search_history.append(args.pattern)
 
         exclude_patterns = self._collect_exclude_patterns()
-        cmd = self._build_command(args, exclude_patterns, backend)
-        stdout = await self._execute_search(cmd)
+        search_path = grep_platform.normalize_search_path(args.path, plan)
+        cmd = self._build_command(args, exclude_patterns, backend, search_path)
+        exec_cmd = grep_platform.wrap_command(cmd, plan)
+        stdout = await self._execute_search(exec_cmd)
 
         return self._parse_output(
             stdout, args.max_matches or self.config.default_max_matches
@@ -161,14 +170,18 @@ class Grep(
         return patterns
 
     def _build_command(
-        self, args: GrepArgs, exclude_patterns: list[str], backend: GrepBackend
+        self,
+        args: GrepArgs,
+        exclude_patterns: list[str],
+        backend: GrepBackend,
+        search_path: str,
     ) -> list[str]:
         if backend == GrepBackend.RIPGREP:
-            return self._build_ripgrep_command(args, exclude_patterns)
-        return self._build_gnu_grep_command(args, exclude_patterns)
+            return self._build_ripgrep_command(args, exclude_patterns, search_path)
+        return self._build_gnu_grep_command(args, exclude_patterns, search_path)
 
     def _build_ripgrep_command(
-        self, args: GrepArgs, exclude_patterns: list[str]
+        self, args: GrepArgs, exclude_patterns: list[str], search_path: str
     ) -> list[str]:
         max_matches = args.max_matches or self.config.default_max_matches
 
@@ -189,12 +202,12 @@ class Grep(
         for pattern in exclude_patterns:
             cmd.extend(["--glob", f"!{pattern}"])
 
-        cmd.extend(["-e", args.pattern, args.path])
+        cmd.extend(["-e", args.pattern, search_path])
 
         return cmd
 
     def _build_gnu_grep_command(
-        self, args: GrepArgs, exclude_patterns: list[str]
+        self, args: GrepArgs, exclude_patterns: list[str], search_path: str
     ) -> list[str]:
         max_matches = args.max_matches or self.config.default_max_matches
 
@@ -210,7 +223,7 @@ class Grep(
             else:
                 cmd.append(f"--exclude={pattern}")
 
-        cmd.extend(["-e", args.pattern, args.path])
+        cmd.extend(["-e", args.pattern, search_path])
 
         return cmd
 
