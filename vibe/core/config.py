@@ -106,6 +106,7 @@ class SessionLoggingConfig(BaseSettings):
     save_dir: str = ""
     session_prefix: str = "session"
     enabled: bool = True
+    event_log_enabled: bool = True
 
     @field_validator("save_dir", mode="before")
     @classmethod

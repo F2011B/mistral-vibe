@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from enum import Enum
 import getpass
 import json
 from pathlib import Path
@@ -8,6 +10,7 @@ import subprocess
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
+from pydantic import BaseModel
 
 from vibe.core.llm.format import get_active_tool_classes
 from vibe.core.platform import get_subprocess_stdin
@@ -30,8 +33,11 @@ class InteractionLogger:
             workdir = Path.cwd()
         self.session_config = session_config
         self.enabled = session_config.enabled
+        self.event_log_enabled = session_config.event_log_enabled
         self.auto_approve = auto_approve
         self.workdir = workdir
+        self._event_index = 0
+        self._event_lock = asyncio.Lock()
 
         if not self.enabled:
             self.save_dir: Path | None = None
@@ -39,6 +45,7 @@ class InteractionLogger:
             self.session_id: str = "disabled"
             self.session_start_time: str = "N/A"
             self.filepath: Path | None = None
+            self.events_filepath: Path | None = None
             self.session_metadata: SessionMetadata | None = None
             return
 
@@ -49,6 +56,7 @@ class InteractionLogger:
 
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.filepath = self._get_save_filepath()
+        self.events_filepath = self._get_events_filepath()
         self.session_metadata = self._initialize_session_metadata()
 
     def _get_save_filepath(self) -> Path:
@@ -58,6 +66,34 @@ class InteractionLogger:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.session_prefix}_{timestamp}_{self.session_id[:8]}.json"
         return self.save_dir / filename
+
+    def _get_events_filepath(self) -> Path:
+        if self.save_dir is None or self.session_prefix is None:
+            raise RuntimeError("Cannot get events filepath when logging is disabled")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = (
+            f"{self.session_prefix}_{timestamp}_{self.session_id[:8]}_events.jsonl"
+        )
+        return self.save_dir / filename
+
+    def _serialize_payload(self, payload: Any) -> Any:
+        match payload:
+            case BaseModel():
+                return payload.model_dump(mode="json", exclude_none=True)
+            case Path():
+                return str(payload)
+            case Enum():
+                return payload.value
+            case dict():
+                return {
+                    key: self._serialize_payload(value)
+                    for key, value in payload.items()
+                }
+            case list():
+                return [self._serialize_payload(item) for item in payload]
+            case _:
+                return payload
 
     def _get_git_commit(self) -> str | None:
         try:
@@ -162,6 +198,30 @@ class InteractionLogger:
         except Exception:
             return None
 
+    async def log_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        if not self.enabled or not self.event_log_enabled:
+            return
+        if self.events_filepath is None:
+            return
+
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "session_id": self.session_id,
+            "sequence": self._event_index,
+            "type": event_type,
+            "payload": self._serialize_payload(payload),
+        }
+        self._event_index += 1
+
+        try:
+            async with self._event_lock:
+                async with aiofiles.open(
+                    self.events_filepath, "a", encoding="utf-8"
+                ) as f:
+                    await f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            return
+
     def reset_session(self, session_id: str) -> None:
         if not self.enabled:
             return
@@ -169,6 +229,8 @@ class InteractionLogger:
         self.session_id = session_id
         self.session_start_time = datetime.now().isoformat()
         self.filepath = self._get_save_filepath()
+        self.events_filepath = self._get_events_filepath()
+        self._event_index = 0
         self.session_metadata = self._initialize_session_metadata()
 
     def get_session_info(
