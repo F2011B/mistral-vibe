@@ -116,6 +116,7 @@ class Agent:
         self.middleware_pipeline = MiddlewarePipeline()
         self.enable_streaming = enable_streaming
         self._setup_middleware()
+        self._llm_request_id = 0
 
         system_prompt = get_universal_system_prompt(
             self.tool_manager, config, self.skill_manager
@@ -199,15 +200,28 @@ class Agent:
 
         self.middleware_pipeline.add(PlanModeMiddleware(lambda: self._mode))
 
+    def _next_llm_request_id(self) -> int:
+        self._llm_request_id += 1
+        return self._llm_request_id
+
     async def _handle_middleware_result(
         self, result: MiddlewareResult
     ) -> AsyncGenerator[BaseEvent]:
         match result.action:
             case MiddlewareAction.STOP:
-                yield AssistantEvent(
+                event = AssistantEvent(
                     content=f"<{VIBE_STOP_EVENT_TAG}>{result.reason}</{VIBE_STOP_EVENT_TAG}>",
                     stopped_by_middleware=True,
                 )
+                await self.interaction_logger.log_event(
+                    "assistant_output",
+                    {
+                        "content": event.content,
+                        "streaming": False,
+                        "stopped_by_middleware": event.stopped_by_middleware,
+                    },
+                )
+                yield event
 
             case MiddlewareAction.INJECT_MESSAGE:
                 if result.message and len(self.messages) > 0:
@@ -247,6 +261,9 @@ class Agent:
 
     async def _conversation_loop(self, user_msg: str) -> AsyncGenerator[BaseEvent]:
         self.messages.append(LLMMessage(role=Role.user, content=user_msg))
+        await self.interaction_logger.log_event(
+            "user_input", {"content": user_msg, "role": Role.user}
+        )
         self.stats.steps += 1
 
         try:
@@ -321,11 +338,27 @@ class Agent:
         chunks_with_content = 0
         chunks_with_reasoning = 0
         BATCH_SIZE = 5
+        output_index = 0
+
+        async def _emit_assistant_output(content: str) -> AssistantEvent:
+            nonlocal output_index
+            output_index += 1
+            event = AssistantEvent(content=content)
+            await self.interaction_logger.log_event(
+                "assistant_output",
+                {
+                    "content": event.content,
+                    "streaming": True,
+                    "chunk_index": output_index,
+                },
+            )
+            return event
 
         async for chunk in self._chat_streaming():
             if chunk.message.reasoning_content:
                 if content_buffer:
-                    yield AssistantEvent(content=content_buffer)
+                    event = await _emit_assistant_output(content_buffer)
+                    yield event
                     content_buffer = ""
                     chunks_with_content = 0
 
@@ -345,9 +378,9 @@ class Agent:
 
                 content_buffer += chunk.message.content
                 chunks_with_content += 1
-
                 if chunks_with_content >= BATCH_SIZE:
-                    yield AssistantEvent(content=content_buffer)
+                    event = await _emit_assistant_output(content_buffer)
+                    yield event
                     content_buffer = ""
                     chunks_with_content = 0
 
@@ -355,11 +388,21 @@ class Agent:
             yield ReasoningEvent(content=reasoning_buffer)
 
         if content_buffer:
-            yield AssistantEvent(content=content_buffer)
+            event = await _emit_assistant_output(content_buffer)
+            yield event
 
     async def _get_assistant_event(self) -> AssistantEvent:
         llm_result = await self._chat()
-        return AssistantEvent(content=llm_result.message.content or "")
+        event = AssistantEvent(content=llm_result.message.content or "")
+        await self.interaction_logger.log_event(
+            "assistant_output",
+            {
+                "content": event.content,
+                "streaming": False,
+                "stopped_by_middleware": event.stopped_by_middleware,
+            },
+        )
+        return event
 
     async def _handle_tool_calls(
         self, resolved: ResolvedMessage
@@ -367,12 +410,24 @@ class Agent:
         for failed in resolved.failed_calls:
             error_msg = f"<{TOOL_ERROR_TAG}>{failed.tool_name}: {failed.error}</{TOOL_ERROR_TAG}>"
 
-            yield ToolResultEvent(
+            event = ToolResultEvent(
                 tool_name=failed.tool_name,
                 tool_class=None,
                 error=error_msg,
                 tool_call_id=failed.call_id,
             )
+            await self.interaction_logger.log_event(
+                "tool_result",
+                {
+                    "tool_name": event.tool_name,
+                    "tool_call_id": event.tool_call_id,
+                    "error": event.error,
+                    "skipped": event.skipped,
+                    "skip_reason": event.skip_reason,
+                    "duration": event.duration,
+                },
+            )
+            yield event
 
             self.stats.tool_calls_failed += 1
             self.messages.append(
@@ -384,23 +439,44 @@ class Agent:
         for tool_call in resolved.tool_calls:
             tool_call_id = tool_call.call_id
 
-            yield ToolCallEvent(
+            call_event = ToolCallEvent(
                 tool_name=tool_call.tool_name,
                 tool_class=tool_call.tool_class,
                 args=tool_call.validated_args,
                 tool_call_id=tool_call_id,
             )
+            await self.interaction_logger.log_event(
+                "tool_call",
+                {
+                    "tool_name": call_event.tool_name,
+                    "tool_call_id": call_event.tool_call_id,
+                    "args": call_event.args,
+                },
+            )
+            yield call_event
 
             try:
                 tool_instance = self.tool_manager.get(tool_call.tool_name)
             except Exception as exc:
                 error_msg = f"Error getting tool '{tool_call.tool_name}': {exc}"
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     error=error_msg,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "error": result_event.error,
+                        "skipped": result_event.skipped,
+                        "skip_reason": result_event.skip_reason,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
                 self.messages.append(
                     LLMMessage.model_validate(
                         self.format_handler.create_tool_response_message(
@@ -422,13 +498,24 @@ class Agent:
                     )
                 )
 
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     skipped=True,
                     skip_reason=skip_reason,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "skipped": result_event.skipped,
+                        "skip_reason": result_event.skip_reason,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
 
                 self.messages.append(
                     LLMMessage.model_validate(
@@ -458,13 +545,23 @@ class Agent:
                     )
                 )
 
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     result=result_model,
                     duration=duration,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "result": result_event.result,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
 
                 self.stats.tool_calls_succeeded += 1
 
@@ -472,12 +569,22 @@ class Agent:
                 cancel = str(
                     get_user_cancellation_message(CancellationReason.TOOL_INTERRUPTED)
                 )
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     error=cancel,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "error": result_event.error,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
                 self.messages.append(
                     LLMMessage.model_validate(
                         self.format_handler.create_tool_response_message(
@@ -491,12 +598,22 @@ class Agent:
                 cancel = str(
                     get_user_cancellation_message(CancellationReason.TOOL_INTERRUPTED)
                 )
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     error=cancel,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "error": result_event.error,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
                 self.messages.append(
                     LLMMessage.model_validate(
                         self.format_handler.create_tool_response_message(
@@ -509,12 +626,22 @@ class Agent:
             except (ToolError, ToolPermissionError) as exc:
                 error_msg = f"<{TOOL_ERROR_TAG}>{tool_instance.get_name()} failed: {exc}</{TOOL_ERROR_TAG}>"
 
-                yield ToolResultEvent(
+                result_event = ToolResultEvent(
                     tool_name=tool_call.tool_name,
                     tool_class=tool_call.tool_class,
                     error=error_msg,
                     tool_call_id=tool_call_id,
                 )
+                await self.interaction_logger.log_event(
+                    "tool_result",
+                    {
+                        "tool_name": result_event.tool_name,
+                        "tool_call_id": result_event.tool_call_id,
+                        "error": result_event.error,
+                        "duration": result_event.duration,
+                    },
+                )
+                yield result_event
 
                 if isinstance(exc, ToolPermissionError):
                     self.stats.tool_calls_agreed -= 1
@@ -538,6 +665,21 @@ class Agent:
             self.tool_manager, self.config
         )
         tool_choice = self.format_handler.get_tool_choice()
+        request_id = self._next_llm_request_id()
+        await self.interaction_logger.log_event(
+            "llm_request",
+            {
+                "request_id": request_id,
+                "model": active_model.name,
+                "provider": provider.name,
+                "temperature": active_model.temperature,
+                "max_tokens": max_tokens,
+                "tool_choice": tool_choice,
+                "tools": available_tools,
+                "messages": self.messages,
+                "streaming": False,
+            },
+        )
 
         try:
             start_time = time.perf_counter()
@@ -566,9 +708,22 @@ class Agent:
                 result.message
             )
             self.messages.append(processed_message)
+            await self.interaction_logger.log_event(
+                "llm_response",
+                {
+                    "request_id": request_id,
+                    "message": processed_message,
+                    "usage": result.usage,
+                    "duration_seconds": end_time - start_time,
+                },
+            )
             return LLMChunk(message=processed_message, usage=result.usage)
 
         except Exception as e:
+            await self.interaction_logger.log_event(
+                "llm_response_error",
+                {"request_id": request_id, "error": str(e)},
+            )
             raise RuntimeError(
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
             ) from e
@@ -583,10 +738,26 @@ class Agent:
             self.tool_manager, self.config
         )
         tool_choice = self.format_handler.get_tool_choice()
+        request_id = self._next_llm_request_id()
+        await self.interaction_logger.log_event(
+            "llm_request",
+            {
+                "request_id": request_id,
+                "model": active_model.name,
+                "provider": provider.name,
+                "temperature": active_model.temperature,
+                "max_tokens": max_tokens,
+                "tool_choice": tool_choice,
+                "tools": available_tools,
+                "messages": self.messages,
+                "streaming": True,
+            },
+        )
         try:
             start_time = time.perf_counter()
             usage = LLMUsage()
             chunk_agg = LLMChunk(message=LLMMessage(role=Role.assistant))
+            chunk_index = 0
             async with self.backend as backend:
                 async for chunk in backend.complete_streaming(
                     model=active_model,
@@ -608,6 +779,16 @@ class Agent:
                     )
                     chunk_agg += processed_chunk
                     usage += chunk.usage or LLMUsage()
+                    chunk_index += 1
+                    await self.interaction_logger.log_event(
+                        "llm_response_chunk",
+                        {
+                            "request_id": request_id,
+                            "chunk_index": chunk_index,
+                            "message": processed_message,
+                            "usage": chunk.usage,
+                        },
+                    )
                     yield processed_chunk
             end_time = time.perf_counter()
 
@@ -618,8 +799,21 @@ class Agent:
             self._update_stats(usage=usage, time_seconds=end_time - start_time)
 
             self.messages.append(chunk_agg.message)
+            await self.interaction_logger.log_event(
+                "llm_response",
+                {
+                    "request_id": request_id,
+                    "message": chunk_agg.message,
+                    "usage": usage,
+                    "duration_seconds": end_time - start_time,
+                },
+            )
 
         except Exception as e:
+            await self.interaction_logger.log_event(
+                "llm_response_error",
+                {"request_id": request_id, "error": str(e)},
+            )
             raise RuntimeError(
                 f"API error from {provider.name} (model: {active_model.name}): {e}"
             ) from e
@@ -813,6 +1007,19 @@ class Agent:
             provider = self.config.get_provider_for_model(active_model)
 
             async with self.backend as backend:
+                request_id = self._next_llm_request_id()
+                await self.interaction_logger.log_event(
+                    "llm_count_tokens_request",
+                    {
+                        "request_id": request_id,
+                        "model": active_model.name,
+                        "provider": provider.name,
+                        "messages": self.messages,
+                        "tools": self.format_handler.get_available_tools(
+                            self.tool_manager, self.config
+                        ),
+                    },
+                )
                 actual_context_tokens = await backend.count_tokens(
                     model=active_model,
                     messages=self.messages,
@@ -820,6 +1027,13 @@ class Agent:
                         self.tool_manager, self.config
                     ),
                     extra_headers={"user-agent": get_user_agent(provider.backend)},
+                )
+                await self.interaction_logger.log_event(
+                    "llm_count_tokens_response",
+                    {
+                        "request_id": request_id,
+                        "tokens": actual_context_tokens,
+                    },
                 )
 
             self.stats.context_tokens = actual_context_tokens
