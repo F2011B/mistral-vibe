@@ -57,6 +57,36 @@ class CommandRegistry:
                 description="Configure Shift+Enter for newlines",
                 handler="_setup_terminal",
             ),
+            "scroll-up": Command(
+                aliases=frozenset(["/scroll-up"]),
+                description="Scroll chat up",
+                handler="_scroll_chat_up_command",
+            ),
+            "scroll-down": Command(
+                aliases=frozenset(["/scroll-down"]),
+                description="Scroll chat down",
+                handler="_scroll_chat_down_command",
+            ),
+            "scroll-page-up": Command(
+                aliases=frozenset(["/scroll-page-up"]),
+                description="Scroll chat up by one page",
+                handler="_scroll_chat_page_up_command",
+            ),
+            "scroll-page-down": Command(
+                aliases=frozenset(["/scroll-page-down"]),
+                description="Scroll chat down by one page",
+                handler="_scroll_chat_page_down_command",
+            ),
+            "scroll-top": Command(
+                aliases=frozenset(["/scroll-top"]),
+                description="Jump to top of chat",
+                handler="_scroll_chat_top_command",
+            ),
+            "scroll-bottom": Command(
+                aliases=frozenset(["/scroll-bottom"]),
+                description="Jump to bottom and follow new output",
+                handler="_scroll_chat_bottom_command",
+            ),
             "status": Command(
                 aliases=frozenset(["/status"]),
                 description="Display agent statistics",
@@ -87,6 +117,7 @@ class CommandRegistry:
             "- `Ctrl+O` Toggle tool output view",
             "- `Ctrl+T` Toggle todo view",
             "- `Shift+Tab` Toggle auto-approve mode",
+            "- `PageUp` / `PageDown` Scroll chat (if terminal supports it)",
             "",
             "### Special Features",
             "",

@@ -6,6 +6,7 @@ import subprocess
 import time
 from typing import Any, ClassVar, assert_never
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
@@ -81,6 +82,10 @@ class VibeApp(App):
         Binding("shift+up", "scroll_chat_up", "Scroll Up", show=False, priority=True),
         Binding(
             "shift+down", "scroll_chat_down", "Scroll Down", show=False, priority=True
+        ),
+        Binding("pageup", "scroll_chat_page_up", "Scroll Up", show=False, priority=True),
+        Binding(
+            "pagedown", "scroll_chat_page_down", "Scroll Down", show=False, priority=True
         ),
     ]
 
@@ -1108,21 +1113,40 @@ class VibeApp(App):
         self.exit(result=self._get_session_resume_info())
 
     def action_scroll_chat_up(self) -> None:
-        try:
-            chat = self.query_one("#chat", VerticalScroll)
-            chat.scroll_relative(y=-5, animate=False)
-            self._auto_scroll = False
-        except Exception:
-            pass
+        self._scroll_chat_by(-5)
 
     def action_scroll_chat_down(self) -> None:
-        try:
-            chat = self.query_one("#chat", VerticalScroll)
-            chat.scroll_relative(y=5, animate=False)
-            if self._is_scrolled_to_bottom(chat):
-                self._auto_scroll = True
-        except Exception:
-            pass
+        self._scroll_chat_by(5)
+
+    def action_scroll_chat_page_up(self) -> None:
+        self._scroll_chat_by(-self._get_chat_page_step())
+
+    def action_scroll_chat_page_down(self) -> None:
+        self._scroll_chat_by(self._get_chat_page_step())
+
+    def _scroll_chat_up_command(self) -> None:
+        self.action_scroll_chat_up()
+
+    def _scroll_chat_down_command(self) -> None:
+        self.action_scroll_chat_down()
+
+    def _scroll_chat_page_up_command(self) -> None:
+        self.action_scroll_chat_page_up()
+
+    def _scroll_chat_page_down_command(self) -> None:
+        self.action_scroll_chat_page_down()
+
+    def _scroll_chat_top_command(self) -> None:
+        if (chat := self._get_chat()) is None:
+            return
+        chat.scroll_home(animate=False)
+        self._auto_scroll = False
+
+    def _scroll_chat_bottom_command(self) -> None:
+        if (chat := self._get_chat()) is None:
+            return
+        chat.scroll_end(animate=False)
+        self._auto_scroll = True
 
     async def _show_dangerous_directory_warning(self) -> None:
         is_dangerous, reason = is_dangerous_directory()
@@ -1162,7 +1186,7 @@ class VibeApp(App):
 
             is_tool_message = isinstance(widget, (ToolCallMessage, ToolResultMessage))
 
-            if not is_tool_message:
+            if not is_tool_message and self._auto_scroll:
                 self.call_after_refresh(self._scroll_to_bottom)
 
         if was_at_bottom:
@@ -1195,6 +1219,30 @@ class VibeApp(App):
             chat.anchor()
         except Exception:
             pass
+
+    def _get_chat(self) -> VerticalScroll | None:
+        try:
+            return self.query_one("#chat", VerticalScroll)
+        except Exception:
+            return None
+
+    def _get_chat_page_step(self) -> int:
+        if (chat := self._get_chat()) is None:
+            return 5
+        return max(1, chat.size.height - 2)
+
+    def _scroll_chat_by(self, delta: int) -> None:
+        if (chat := self._get_chat()) is None:
+            return
+
+        chat.scroll_relative(y=delta, animate=False)
+
+        if delta < 0:
+            self._auto_scroll = False
+            return
+
+        if self._is_scrolled_to_bottom(chat):
+            self._auto_scroll = True
 
     def _schedule_update_notification(self) -> None:
         if (
@@ -1253,6 +1301,42 @@ class VibeApp(App):
 
     def on_mouse_up(self, event: MouseUp) -> None:
         copy_selection_to_clipboard(self)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        if not self._is_mouse_event_in_chat(event):
+            return
+        self._scroll_chat_by(-3)
+        event.stop()
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        if not self._is_mouse_event_in_chat(event):
+            return
+        self._scroll_chat_by(3)
+        event.stop()
+
+    def _is_mouse_event_in_chat(self, event: events.MouseEvent) -> bool:
+        if (chat := self._get_chat()) is None:
+            return False
+
+        screen_x = getattr(event, "screen_x", None)
+        screen_y = getattr(event, "screen_y", None)
+        if screen_x is None or screen_y is None:
+            return False
+
+        region = getattr(chat, "region", None)
+        if region is None:
+            return False
+
+        try:
+            return region.contains(screen_x, screen_y)
+        except Exception:
+            left = getattr(region, "x", None)
+            top = getattr(region, "y", None)
+            width = getattr(region, "width", None)
+            height = getattr(region, "height", None)
+            if None in (left, top, width, height):
+                return False
+            return left <= screen_x < left + width and top <= screen_y < top + height
 
     def on_app_blur(self, event: AppBlur) -> None:
         if self._chat_input_container and self._chat_input_container.input_widget:
