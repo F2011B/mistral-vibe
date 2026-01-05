@@ -89,11 +89,46 @@ async def test_spawn_subagent_creates_worktree_and_process(orchestrator, mock_co
 
         assert args[0] == sys.executable
         assert args[1] == "-m"
-        assert args[2] == "vibe"
+        assert args[2] == "vibe.cli.entrypoint"
 
         # Check env var
         assert "env" in kwargs
         assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
+
+
+@pytest.mark.asyncio
+async def test_spawn_subagent_resume_includes_session_flags(orchestrator):
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+
+    comm_future = asyncio.Future()
+    comm_future.set_result((b"", b""))
+    mock_process.communicate.return_value = comm_future
+
+    mock_process.wait = AsyncMock(return_value=0)
+    mock_process.stdout = AsyncMock()
+    mock_process.stdout.readline.side_effect = [b"log line\n", b""]
+    mock_process.stderr = AsyncMock()
+    mock_process.stderr.readline.return_value = b""
+
+    with patch("asyncio.create_subprocess_exec", new_callable=MagicMock) as mock_exec, \
+         patch.object(orchestrator, "_check_disk_space", return_value=True), \
+         patch("vibe.core.orchestrator.shutil.rmtree"):
+
+        f = asyncio.Future()
+        f.set_result(mock_process)
+        mock_exec.return_value = f
+
+        session_id = "session-123"
+        await orchestrator.spawn_subagent("Resume Task", resume_session_id=session_id)
+        await asyncio.sleep(0.1)
+
+        args, _ = mock_exec.call_args_list[1]
+        cmd = list(args)
+        resume_index = cmd.index("--resume")
+        assert cmd[resume_index + 1] == session_id
+        session_index = cmd.index("--session-id")
+        assert cmd[session_index + 1] == session_id
 
 
 @pytest.mark.asyncio

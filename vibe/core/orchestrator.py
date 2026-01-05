@@ -444,7 +444,10 @@ class Orchestrator:
              cmd = [sys.executable, "-m", "vibe.cli.entrypoint", "-p", agent.task]
              if agent.stats.get("auto_approve", True):
                  cmd.append("--auto-approve")
-             if agent.session_id and not agent.resume_session_id:
+             if agent.resume_session_id:
+                  cmd.append("--resume")
+                  cmd.append(agent.resume_session_id)
+             if agent.session_id:
                   cmd.append("--session-id")
                   cmd.append(agent.session_id)
 
