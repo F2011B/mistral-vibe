@@ -163,6 +163,7 @@ async def test_spawn_subagent_rewrites_module_command(orchestrator):
 
         args, _ = mock_exec.call_args_list[1]
         cmd = list(args)
+        assert cmd[0] == sys.executable
         module_index = cmd.index("-m")
         assert cmd[module_index + 1] == "vibe.cli.entrypoint"
 

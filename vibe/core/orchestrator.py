@@ -414,8 +414,18 @@ class Orchestrator:
         def _normalize_command(command: list[str]) -> list[str]:
             normalized = list(command)
             for idx, token in enumerate(normalized[:-1]):
-                if token in ("-m", "--module") and normalized[idx + 1] == "vibe":
-                    normalized[idx + 1] = "vibe.cli.entrypoint"
+                if token not in ("-m", "--module"):
+                    continue
+
+                module_name = normalized[idx + 1]
+                if not module_name.startswith("vibe"):
+                    continue
+
+                normalized[idx + 1] = "vibe.cli.entrypoint"
+                interpreter = Path(normalized[0]).name
+                if interpreter.startswith("python"):
+                    normalized[0] = sys.executable
+                break
             return normalized
 
         # Construct command: use provided command or default to vibe
