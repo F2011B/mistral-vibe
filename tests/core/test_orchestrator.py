@@ -13,6 +13,7 @@ from vibe.core.orchestrator import Orchestrator, SubAgent, SubAgentStatus
 def mock_config(tmp_path):
     config = MagicMock(spec=VibeConfig)
     config.effective_workdir = tmp_path
+    config.secrets_allowlist = []
     return config
 
 
