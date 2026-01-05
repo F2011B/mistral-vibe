@@ -65,8 +65,11 @@ from vibe.core.utils import (
     CancellationReason,
     get_user_cancellation_message,
     is_dangerous_directory,
+    is_dangerous_directory,
     logger,
 )
+from vibe.core.orchestrator import Orchestrator
+# from vibe.cli.textual_ui.screens.vibes_screen import VibesScreen
 
 
 class BottomApp(StrEnum):
@@ -152,7 +155,11 @@ class VibeApp(App):  # noqa: PLR0904
         self._auto_scroll = True
         self._last_escape_time: float | None = None
         self._terminal_theme = capture_terminal_theme()
+        self._last_escape_time: float | None = None
+        self._terminal_theme = capture_terminal_theme()
         self._show_reasoning = config.show_reasoning
+
+        self.orchestrator = Orchestrator(config)
 
     @property
     def config(self) -> VibeConfig:
@@ -181,6 +188,7 @@ class VibeApp(App):  # noqa: PLR0904
             yield PathDisplay(
                 self.config.displayed_workdir or self.config.effective_workdir
             )
+            yield Static(id="subagent-counter", classes="hidden")
             yield Static(id="spacer")
             yield ContextProgress()
 
@@ -224,6 +232,21 @@ class VibeApp(App):  # noqa: PLR0904
             self.call_after_refresh(self._process_initial_prompt)
         else:
             self._ensure_agent_init_task()
+
+        self.set_interval(1.0, self._update_subagent_counter)
+
+        # New TUI Redesign
+        from vibe.cli.textual_ui.screens.agent_browser import AgentBrowserScreen
+        self.install_screen(AgentBrowserScreen(), name="browser")
+        await self.push_screen("browser")
+
+    async def _show_admin(self) -> None:
+        """Switch to the Vibes Dashboard."""
+        await self.push_screen("vibes")
+
+    async def _show_browser(self) -> None:
+        """Switch to the Agent Browser."""
+        await self.push_screen("browser")
 
     def _process_initial_prompt(self) -> None:
         if self._initial_prompt:
@@ -482,6 +505,7 @@ class VibeApp(App):  # noqa: PLR0904
                 self.config,
                 mode=self._current_agent_mode,
                 enable_streaming=self.enable_streaming,
+                orchestrator=self.orchestrator,
             )
 
             if not self._current_agent_mode.auto_approve:
@@ -825,6 +849,56 @@ class VibeApp(App):  # noqa: PLR0904
                     f"Failed to get log path: {e}", collapsed=self._tools_collapsed
                 )
             )
+
+    def _update_subagent_counter(self) -> None:
+        if not self.agent or not hasattr(self.agent, "orchestrator"):
+            return
+
+        counter = self.query_one("#subagent-counter", Static)
+        count = len([a for a in self.agent.orchestrator.list_subagents()
+                     if a.status in ("STARTING", "RUNNING")])
+
+        if count > 0:
+            counter.update(f"Sub-agents: {count}")
+            counter.remove_class("hidden")
+        else:
+            counter.add_class("hidden")
+
+    async def _show_subagents(self) -> None:
+        if not self.agent or not hasattr(self.agent, "orchestrator"):
+             await self._mount_and_scroll(
+                ErrorMessage("Agent/Orchestrator not initialized.")
+            )
+             return
+
+        agents = self.agent.orchestrator.list_subagents()
+        if not agents:
+            await self._mount_and_scroll(UserCommandMessage("No sub-agents found."))
+            return
+
+        lines = ["## Sub-agents"]
+        for agent in agents:
+            bead_info = f" (Bead: {agent.bead_id})" if agent.bead_id else ""
+            lines.append(f"- **{agent.id}**: {agent.status} (Task: {agent.task}){bead_info}")
+            if agent.worktree_path:
+                lines.append(f"  - Worktree: `{agent.worktree_path}`")
+            if agent.exit_code is not None:
+                lines.append(f"  - Exit Code: {agent.exit_code}")
+
+        await self._mount_and_scroll(UserCommandMessage("\n".join(lines)))
+
+    async def _show_subagent_logs(self, agent_id: str) -> None:
+         if not self.agent or not hasattr(self.agent, "orchestrator"):
+             return
+
+         agent = self.agent.orchestrator.get_subagent(agent_id)
+         if not agent:
+             await self._mount_and_scroll(ErrorMessage(f"Sub-agent {agent_id} not found."))
+             return
+
+         logs = "\n".join(agent.logs)
+         await self._mount_and_scroll(UserCommandMessage(f"## Logs for {agent_id}\n\n```\n{logs}\n```"))
+
 
     async def _compact_history(self) -> None:
         if self._agent_running:

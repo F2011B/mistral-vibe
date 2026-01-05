@@ -38,8 +38,13 @@ class ToolManager:
     should have its own ToolManager instance.
     """
 
-    def __init__(self, config_getter: Callable[[], VibeConfig]) -> None:
+    def __init__(
+        self,
+        config_getter: Callable[[], VibeConfig],
+        extra_dependencies: dict[str, Any] | None = None,
+    ) -> None:
         self._config_getter = config_getter
+        self._extra_dependencies = extra_dependencies or {}
         self._instances: dict[str, BaseTool] = {}
         self._search_paths: list[Path] = self._compute_search_paths(self._config)
 
@@ -47,6 +52,56 @@ class ToolManager:
             cls.get_name(): cls for cls in self._iter_tool_classes(self._search_paths)
         }
         self._integrate_mcp()
+
+    # ... (skipping unchanged properties/methods)
+
+    def get(self, tool_name: str) -> BaseTool:
+        """Get a tool instance, creating it lazily on first call.
+
+        Raises:
+            NoSuchToolError: If the requested tool is not available.
+        """
+        if tool_name in self._instances:
+            return self._instances[tool_name]
+
+        if tool_name not in self._available:
+            raise NoSuchToolError(
+                f"Unknown tool: {tool_name}. Available: {list(self._available.keys())}"
+            )
+
+        tool_class = self._available[tool_name]
+        tool_config = self.get_tool_config(tool_name)
+
+        # Check if tool needs extra dependencies
+        sig = inspect.signature(tool_class.__init__)
+        kwargs = {}
+        for param_name in sig.parameters:
+            if param_name in self._extra_dependencies:
+                kwargs[param_name] = self._extra_dependencies[param_name]
+
+        # Use from_config if it supports kwargs, otherwise fallback to constructor if overridden?
+        # Standard BaseTool.from_config only takes config.
+        # But if the tool overrides __init__, we might need to call constructor directly if from_config isn't enough.
+        # However, BaseTool.from_config creates instance using cls(config=config, state=state).
+        # We need to hack this or ensure tools override from_config if they need extras?
+        # Better: Instantiate directly if we satisfy dependencies.
+
+        # Actually, let's assume tools that need extras will have __init__ accepting matching names.
+        # But BaseTool.from_config implementation is: return cls(config=config, state=cls._get_tool_state_class()())
+        # So we should call the constructor directly here if we want to inject.
+
+        state_class = tool_class._get_tool_state_class()
+        state = state_class()
+
+        try:
+             # Try passing extras to constructor
+            instance = tool_class(config=tool_config, state=state, **kwargs)
+        except TypeError:
+            # Fallback for standard tools
+             instance = tool_class(config=tool_config, state=state)
+
+        self._instances[tool_name] = instance
+        return self._instances[tool_name]
 
     @property
     def _config(self) -> VibeConfig:
@@ -245,24 +300,7 @@ class ToolManager:
 
         return config_class.model_validate(merged_dict)
 
-    def get(self, tool_name: str) -> BaseTool:
-        """Get a tool instance, creating it lazily on first call.
 
-        Raises:
-            NoSuchToolError: If the requested tool is not available.
-        """
-        if tool_name in self._instances:
-            return self._instances[tool_name]
-
-        if tool_name not in self._available:
-            raise NoSuchToolError(
-                f"Unknown tool: {tool_name}. Available: {list(self._available.keys())}"
-            )
-
-        tool_class = self._available[tool_name]
-        tool_config = self.get_tool_config(tool_name)
-        self._instances[tool_name] = tool_class.from_config(tool_config)
-        return self._instances[tool_name]
 
     def reset_all(self) -> None:
         self._instances.clear()

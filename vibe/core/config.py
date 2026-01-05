@@ -234,6 +234,11 @@ class ModelConfig(BaseModel):
         return data
 
 
+class AllowedAgentType(BaseModel):
+    label: str
+    value: str
+    command: list[str] | None = None
+
 DEFAULT_PROVIDERS = [
     ProviderConfig(
         name="mistral",
@@ -284,6 +289,7 @@ class VibeConfig(BaseSettings):
     context_warnings: bool = False
     textual_theme: str = "textual-dark"
     show_reasoning: bool = False
+    enable_knowledge_extraction: bool = True
     instructions: str = ""
     workdir: Path | None = Field(default=None, exclude=True)
     system_prompt_id: str = "cli"
@@ -337,6 +343,19 @@ class VibeConfig(BaseSettings):
             "Additional directories to search for skills. "
             "Each path may be absolute or relative to the current working directory."
         ),
+    )
+
+    allowed_agent_types: list[AllowedAgentType] = Field(
+        default_factory=lambda: [
+            AllowedAgentType(label="Vibe", value="vibe"),
+            AllowedAgentType(label="Codex", value="codex", command=["codex", "exec"])
+        ],
+        description="List of allowed agent types and their commands."
+    )
+
+    secrets_allowlist: list[str] = Field(
+        default_factory=list,
+        description="List of environment variable names (secrets) to inject into agent environments."
     )
 
     model_config = SettingsConfigDict(

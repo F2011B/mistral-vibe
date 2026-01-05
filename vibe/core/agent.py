@@ -27,6 +27,7 @@ from vibe.core.middleware import (
     TurnLimitMiddleware,
 )
 from vibe.core.modes import AgentMode
+from vibe.core.orchestrator import Orchestrator
 from vibe.core.prompts import UtilityPrompt
 from vibe.core.skills.manager import SkillManager
 from vibe.core.system_prompt import get_universal_system_prompt
@@ -88,6 +89,9 @@ class LLMResponseError(AgentError):
     """Raised when LLM response is malformed or missing expected data."""
 
 
+from vibe.core.knowledge import KnowledgeExtractor
+
+
 class Agent:
     def __init__(
         self,
@@ -98,6 +102,7 @@ class Agent:
         max_price: float | None = None,
         backend: BackendLike | None = None,
         enable_streaming: bool = False,
+        orchestrator: Orchestrator | None = None,
     ) -> None:
         """Initialize the agent with configuration and mode."""
         self.config = config
@@ -105,12 +110,16 @@ class Agent:
         self._max_turns = max_turns
         self._max_price = max_price
 
-        self.tool_manager = ToolManager(lambda: self.config)
+        self.orchestrator = orchestrator or Orchestrator(self.config)
+        self.tool_manager = ToolManager(
+            lambda: self.config, extra_dependencies={"orchestrator": self.orchestrator}
+        )
         self.skill_manager = SkillManager(lambda: self.config)
         self.format_handler = APIToolFormatHandler()
 
         self.backend_factory = lambda: backend or self._select_backend()
         self.backend = self.backend_factory()
+        self.knowledge_extractor = KnowledgeExtractor(self.backend, self.config)
 
         self.message_observer = message_observer
         self._last_observed_message_index: int = 0
@@ -326,6 +335,10 @@ class Agent:
         )
 
         if not resolved.tool_calls and not resolved.failed_calls:
+            if self.config.enable_knowledge_extraction:
+                asyncio.create_task(
+                    self.knowledge_extractor.extract_and_save(list(self.messages))
+                )
             return
 
         async for event in self._handle_tool_calls(resolved):
@@ -384,7 +397,6 @@ class Agent:
                 continue
             if chunk.message.content:
                 content_buffer += chunk.message.content
-                chunk_has_payload = True
 
             if chunk.message.reasoning_content:
                 reasoning_buffer += chunk.message.reasoning_content

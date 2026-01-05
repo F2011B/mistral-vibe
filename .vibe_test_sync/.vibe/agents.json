@@ -1,0 +1,1 @@
+{"subagents": {"agent-1": {"id": "agent-1", "task": "Test Task", "worktree_path": null, "status": "terminated", "logs": [], "start_time": "2024-01-01T00:00:00", "exit_code": null, "bead_id": null, "pid": 80675}}}

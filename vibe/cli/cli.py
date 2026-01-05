@@ -164,6 +164,7 @@ def run_cli(args: argparse.Namespace) -> None:
                     output_format=output_format,
                     previous_messages=loaded_messages,
                     mode=initial_mode,
+                    session_id=args.session_id if hasattr(args, "session_id") else None,
                 )
                 if final_response:
                     print(final_response)

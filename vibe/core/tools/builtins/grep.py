@@ -120,6 +120,11 @@ class Grep(
             case _:
                 raise ToolError(f"Unsupported grep backend: {plan.backend}")
 
+    def _detect_backend(self) -> GrepBackend:
+        """Compatibility shim for tests."""
+        plan = grep_platform.get_execution_plan()
+        return self._resolve_backend(plan)
+
     async def run(self, args: GrepArgs) -> GrepResult:
         plan = grep_platform.get_execution_plan()
         backend = self._resolve_backend(plan)

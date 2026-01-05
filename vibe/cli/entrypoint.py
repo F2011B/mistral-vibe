@@ -100,6 +100,11 @@ def parse_arguments() -> argparse.Namespace:
         metavar="SESSION_ID",
         help="Resume a specific session by its ID (supports partial matching)",
     )
+    parser.add_argument(
+        "--session-id",
+        metavar="UUID",
+        help="Explicitly set the session ID for a new session",
+    )
     return parser.parse_args()
 
 
@@ -128,6 +133,22 @@ def check_and_resolve_trusted_folder() -> None:
 
 
 def main() -> None:
+    # Handle 'exec' alias for programmatic mode
+    # vibe exec "prompt" -> vibe -p "prompt" --auto-approve
+    if len(sys.argv) > 1 and sys.argv[1] == "exec":
+        sys.argv.pop(1)
+        # We need to ensure -p/--prompt is set if not already
+        if "-p" not in sys.argv and "--prompt" not in sys.argv:
+             # Check if there is a positional arg for prompt
+             # This is tricky with argparse, so we'll just inject -p and rely on the parser
+             # But parse_arguments expects -p [TEXT].
+             # If user ran: vibe exec "my prompt", argv is now ["my prompt"]
+             # If we inject -p, it becomes -p "my prompt". Perfect.
+             sys.argv.insert(1, "-p")
+
+        if "--auto-approve" not in sys.argv:
+            sys.argv.append("--auto-approve")
+
     args = parse_arguments()
 
     is_interactive = args.prompt is None

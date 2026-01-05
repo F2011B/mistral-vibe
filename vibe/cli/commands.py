@@ -92,6 +92,21 @@ class CommandRegistry:
                 description="Display agent statistics",
                 handler="_show_status",
             ),
+            "subagents": Command(
+                aliases=frozenset(["/subagents"]),
+                description="List active sub-agents",
+                handler="_show_subagents",
+            ),
+            "admin": Command(
+                aliases=frozenset(["/admin"]),
+                description="Open Agent Admin (Pip-Boy)",
+                handler="_show_admin",
+            ),
+            "vibes": Command(
+                aliases=frozenset(["/vibes"]),
+                description="Open Agent Orchestrator",
+                handler="_show_browser",
+            ),
         }
 
         for command in excluded_commands:
