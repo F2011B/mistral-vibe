@@ -411,6 +411,13 @@ class Orchestrator:
         # Determine working directory
         cwd = agent.working_dir or agent.worktree_path or self.config.effective_workdir
 
+        def _normalize_command(command: list[str]) -> list[str]:
+            normalized = list(command)
+            for idx, token in enumerate(normalized[:-1]):
+                if token in ("-m", "--module") and normalized[idx + 1] == "vibe":
+                    normalized[idx + 1] = "vibe.cli.entrypoint"
+            return normalized
+
         # Construct command: use provided command or default to vibe
         if agent.command:
              # Ensure command uses the provided arguments.
@@ -420,7 +427,7 @@ class Orchestrator:
              # User expectation: "start codex exec". If we pass `command=["codex", "exec"]`,
              # we probably need to append the task.
              # Flexible approach: Assume `command` is the prefix, append `task` as the last arg.
-             cmd = list(agent.command)
+             cmd = _normalize_command(list(agent.command))
              if agent.resume_session_id:
                  # Check if this is codex or vibe
                  if "codex" in cmd[0]:
