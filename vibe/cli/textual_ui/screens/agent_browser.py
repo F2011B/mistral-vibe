@@ -130,7 +130,7 @@ class AgentBrowserScreen(Screen):
                 "type": "history",
                 "id": sid, # For history, id IS session_id
                 "session_id": sid,
-                "status": "completed", # Implicit
+                "status": status,
                 "task": sess.get("preview", "No preview"),
                 "timestamp": sess.get("start_time", ""),
                 "model": sess.get("model", "N/A"),

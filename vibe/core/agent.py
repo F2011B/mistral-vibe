@@ -51,6 +51,7 @@ from vibe.core.types import (
     LLMMessage,
     LLMUsage,
     Role,
+    SessionStatus,
     SyncApprovalCallback,
     ToolCallEvent,
     ToolResultEvent,
@@ -276,6 +277,7 @@ class Agent:
         )
         self.stats.steps += 1
 
+        status = SessionStatus.COMPLETED
         try:
             should_break_loop = False
             while not should_break_loop:
@@ -312,8 +314,14 @@ class Agent:
                 if after_result.action == MiddlewareAction.STOP:
                     return
 
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            status = SessionStatus.FAILED
+            raise
         finally:
             self._flush_new_messages()
+            self.interaction_logger.set_status(status)
             await self.interaction_logger.save_interaction(
                 self.messages, self.stats, self.config, self.tool_manager
             )

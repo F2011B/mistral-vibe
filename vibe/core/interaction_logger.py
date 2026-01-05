@@ -14,7 +14,13 @@ from pydantic import BaseModel
 
 from vibe.core.llm.format import get_active_tool_classes
 from vibe.core.platform import get_subprocess_stdin
-from vibe.core.types import AgentStats, LLMMessage, SessionInfo, SessionMetadata
+from vibe.core.types import (
+    AgentStats,
+    LLMMessage,
+    SessionInfo,
+    SessionMetadata,
+    SessionStatus,
+)
 
 if TYPE_CHECKING:
     from vibe.core.config import SessionLoggingConfig, VibeConfig
@@ -232,6 +238,11 @@ class InteractionLogger:
         self.events_filepath = self._get_events_filepath()
         self._event_index = 0
         self.session_metadata = self._initialize_session_metadata()
+
+    def set_status(self, status: SessionStatus) -> None:
+        if self.session_metadata is None:
+            return
+        self.session_metadata.status = status
 
     def get_session_info(
         self, messages: list[dict[str, Any]], stats: AgentStats

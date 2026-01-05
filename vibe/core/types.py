@@ -97,6 +97,11 @@ class SessionInfo(BaseModel):
     save_dir: str
 
 
+class SessionStatus(StrEnum):
+    COMPLETED = auto()
+    FAILED = auto()
+
+
 class SessionMetadata(BaseModel):
     session_id: str
     start_time: str
@@ -106,6 +111,7 @@ class SessionMetadata(BaseModel):
     environment: dict[str, str | None]
     auto_approve: bool = False
     username: str
+    status: SessionStatus = SessionStatus.COMPLETED
 
 
 StrToolChoice = Literal["auto", "none", "any", "required"]
