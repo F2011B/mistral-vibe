@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import lru_cache
 import os
 import re
 from typing import ClassVar, final
@@ -8,6 +9,8 @@ from shlex import quote
 import sys
 
 from pydantic import BaseModel, Field
+from tree_sitter import Language, Node, Parser
+import tree_sitter_bash as tsbash
 
 from vibe.core.tools.base import (
     BaseTool,
@@ -25,6 +28,38 @@ from vibe.core.tools.builtins.bash_platform import (
     get_subprocess_kwargs,
     kill_process_tree,
 )
+from vibe.core.utils import is_windows
+
+
+@lru_cache(maxsize=1)
+def _get_parser() -> Parser:
+    return Parser(Language(tsbash.language()))
+
+
+def _extract_commands(command: str) -> list[str]:
+    parser = _get_parser()
+    tree = parser.parse(command.encode("utf-8"))
+
+    commands: list[str] = []
+
+    def find_commands(node: Node) -> None:
+        if node.type == "command":
+            parts = []
+            for child in node.children:
+                if (
+                    child.type
+                    in {"command_name", "word", "string", "raw_string", "concatenation"}
+                    and child.text is not None
+                ):
+                    parts.append(child.text.decode("utf-8"))
+            if parts:
+                commands.append(" ".join(parts))
+
+        for child in node.children:
+            find_commands(child)
+
+    find_commands(tree.root_node)
+    return commands
 
 
 class BashToolConfig(BaseToolConfig):
@@ -80,9 +115,10 @@ class Bash(BaseTool[BashArgs, BashResult, BashToolConfig, BaseToolState]):
     description: ClassVar[str] = "Run a one-off bash command and capture its output."
 
     def check_allowlist_denylist(self, args: BashArgs) -> ToolPermission | None:
-        command_parts = re.split(r"(?:&&|\|\||;|\|)", args.command)
-        command_parts = [part.strip() for part in command_parts if part.strip()]
+        if is_windows():
+            return None
 
+        command_parts = _extract_commands(args.command)
         if not command_parts:
             return None
 
