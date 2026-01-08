@@ -452,8 +452,15 @@ class Orchestrator:
                      # Then we append task.
                  else:
                      # Vibe resume logic
-                     cmd.append("--resume")
-                     cmd.append(agent.resume_session_id)
+                    cmd.append("--resume")
+                    cmd.append(agent.resume_session_id)
+             elif agent.session_id and "codex" not in cmd[0]:
+                 # Inject session ID if not codex
+                 cmd.append("--session-id")
+                 cmd.append(agent.session_id)
+
+             if "codex" not in cmd[0] and agent.stats.get("auto_approve", True):
+                  cmd.append("--auto-approve")
 
              cmd.append(agent.task)
         else:
@@ -562,6 +569,7 @@ class Orchestrator:
 
             await agent.process.wait()
             agent.exit_code = agent.process.returncode
+            logger.info(f"Subagent {agent.id} exited with code {agent.exit_code}")
 
             if agent.exit_code == 0:
                 agent.status = SubAgentStatus.COMPLETED

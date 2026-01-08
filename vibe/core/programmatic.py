@@ -71,12 +71,14 @@ def run_programmatic(
                 if msg.role == Role.tool:
                      print(f"[TOOL_RESULT] {msg.content} (id={msg.tool_call_id})")
 
-
         try:
             async for event in agent.act(prompt):
                 formatter.on_event(event)
                 if isinstance(event, AssistantEvent) and event.stopped_by_middleware:
                     raise ConversationLimitException(event.content)
+        except Exception:
+            # Re-raise - cli.py handles writing error to session file
+            raise
         finally:
             # Emit stats for Orchestrator to parse
             stats_dict = {
@@ -88,3 +90,4 @@ def run_programmatic(
         return formatter.finalize()
 
     return asyncio.run(_async_run())
+

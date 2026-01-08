@@ -14,6 +14,7 @@ class SlashCommandController:
         self._view = view
         self._suggestions: list[tuple[str, str]] = []
         self._selected_index = 0
+        self._scroll_offset = 0
 
     def can_handle(self, text: str, cursor_index: int) -> bool:
         return text.startswith("/")
@@ -22,6 +23,7 @@ class SlashCommandController:
         if self._suggestions:
             self._suggestions.clear()
             self._selected_index = 0
+            self._scroll_offset = 0
             self._view.clear_completion_suggestions()
 
     def on_text_changed(self, text: str, cursor_index: int) -> None:
@@ -34,16 +36,32 @@ class SlashCommandController:
             return
 
         suggestions = self._completer.get_completion_items(text, cursor_index)
-        if len(suggestions) > MAX_SUGGESTIONS_COUNT:
-            suggestions = suggestions[:MAX_SUGGESTIONS_COUNT]
+        # No truncation here anymore, we truncate at render time
+
         if suggestions:
             self._suggestions = suggestions
             self._selected_index = 0
-            self._view.render_completion_suggestions(
-                self._suggestions, self._selected_index
-            )
+            self._scroll_offset = 0
+            self._render()
         else:
             self.reset()
+
+    def _render(self) -> None:
+        if not self._suggestions:
+            self._view.clear_completion_suggestions()
+            return
+
+        # Calculate visible window
+        start = self._scroll_offset
+        end = start + MAX_SUGGESTIONS_COUNT
+        visible_suggestions = self._suggestions[start:end]
+
+        # Calculate selected index relative to the visible window
+        relative_selected = self._selected_index - start
+
+        self._view.render_completion_suggestions(
+            visible_suggestions, relative_selected
+        )
 
     def on_key(
         self, event: events.Key, text: str, cursor_index: int
@@ -78,10 +96,24 @@ class SlashCommandController:
             return
 
         count = len(self._suggestions)
-        self._selected_index = (self._selected_index + delta) % count
-        self._view.render_completion_suggestions(
-            self._suggestions, self._selected_index
-        )
+        new_index = (self._selected_index + delta) % count
+        self._selected_index = new_index
+
+        # Adjust scroll offset to keep selected index in view
+        # If we wrapped around from bottom to top
+        if delta > 0 and new_index == 0:
+            self._scroll_offset = 0
+        # If we wrapped around from top to bottom
+        elif delta < 0 and new_index == count - 1:
+            self._scroll_offset = max(0, count - MAX_SUGGESTIONS_COUNT)
+        else:
+            # Standard scrolling
+            if self._selected_index < self._scroll_offset:
+                self._scroll_offset = self._selected_index
+            elif self._selected_index >= self._scroll_offset + MAX_SUGGESTIONS_COUNT:
+                self._scroll_offset = self._selected_index - MAX_SUGGESTIONS_COUNT + 1
+
+        self._render()
 
     def _apply_selected_completion(self, text: str, cursor_index: int) -> bool:
         if not self._suggestions:

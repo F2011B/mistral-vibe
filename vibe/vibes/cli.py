@@ -83,7 +83,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "tui" or args.command is None:
-        from vibe.cli.textual_ui.runner import run_tui
+        from vibe.vibes.app import run_tui
         run_tui()
     elif args.command == "list":
         list_agents(orchestrator)

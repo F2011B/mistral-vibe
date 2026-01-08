@@ -172,8 +172,59 @@ def run_cli(args: argparse.Namespace) -> None:
             except ConversationLimitException as e:
                 print(e, file=sys.stderr)
                 sys.exit(1)
-            except RuntimeError as e:
+            except Exception as e:
+                # Log error to session file so it appears in UI
+                session_id = getattr(args, "session_id", None)
+                if session_id:
+                    try:
+                        import json
+                        from datetime import datetime
+                        from pathlib import Path
+
+                        save_dir = Path(config.session_logging.save_dir)
+                        save_dir.mkdir(parents=True, exist_ok=True)
+
+                        # First, try to find existing session file (for resume case)
+                        existing_file = InteractionLogger.find_session_by_id(
+                            session_id, config.session_logging
+                        )
+
+                        if existing_file and existing_file.exists():
+                            # Update existing file
+                            with open(existing_file, "r+") as f:
+                                data = json.load(f)
+                                data.setdefault("messages", []).append({
+                                    "role": "assistant",
+                                    "content": f"**System Error**: {e}"
+                                })
+                                data.setdefault("metadata", {})["status"] = "failed"
+                                f.seek(0)
+                                json.dump(data, f, indent=2)
+                                f.truncate()
+                        else:
+                            # Create new file (for new session case)
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filename = f"session_{timestamp}_{session_id[:8]}.json"
+                            session_file = save_dir / filename
+
+                            session_data = {
+                                "metadata": {
+                                    "session_id": session_id,
+                                    "status": "failed",
+                                    "start_time": datetime.now().isoformat(),
+                                },
+                                "messages": [
+                                    {"role": "assistant", "content": f"**System Error**: {e}"}
+                                ]
+                            }
+                            print(f"[DEBUG CLI] Saving error to: {session_file}", file=sys.stderr)
+                            with open(session_file, "w") as f:
+                                json.dump(session_data, f, indent=2)
+                    except Exception as logging_err:
+                         print(f"[DEBUG CLI] Failed to save error: {logging_err}", file=sys.stderr)
+
                 print(f"Error: {e}", file=sys.stderr)
+                print(f"[DEBUG CLI] Exiting with code 1", file=sys.stderr)
                 sys.exit(1)
         else:
             run_textual_ui(

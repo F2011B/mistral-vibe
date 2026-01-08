@@ -236,9 +236,9 @@ class VibeApp(App):  # noqa: PLR0904
         self.set_interval(1.0, self._update_subagent_counter)
 
         # New TUI Redesign
-        from vibe.cli.textual_ui.screens.agent_browser import AgentBrowserScreen
-        self.install_screen(AgentBrowserScreen(), name="browser")
-        await self.push_screen("browser")
+        # from vibe.cli.textual_ui.screens.agent_browser import AgentBrowserScreen
+        # self.install_screen(AgentBrowserScreen(), name="browser")
+        # await self.push_screen("browser")
 
     async def _show_admin(self) -> None:
         """Switch to the Vibes Dashboard."""
@@ -568,6 +568,16 @@ class VibeApp(App):  # noqa: PLR0904
                         )
                     )
 
+        def _do_scroll() -> None:
+            try:
+                chat = self.query_one("#chat", VerticalScroll)
+                chat.scroll_end(animate=False)
+            except Exception:
+                pass
+
+        # Delay to ensure widgets are fully rendered
+        self.set_timer(0.5, _do_scroll)
+
     async def _mount_history_assistant_message(
         self, msg: LLMMessage, messages_area: Widget, tool_call_map: dict[str, str]
     ) -> None:
@@ -741,6 +751,28 @@ class VibeApp(App):  # noqa: PLR0904
         if self._current_bottom_app == BottomApp.Config:
             return
         await self._switch_to_config_app()
+
+    async def _show_context(self) -> None:
+        """Show context usage visualization."""
+        if self.agent is None:
+            await self._mount_and_scroll(
+                ErrorMessage(
+                    "Agent not initialized yet. Send a message first.",
+                    collapsed=self._tools_collapsed,
+                )
+            )
+            return
+
+        from vibe.cli.textual_ui.widgets.context_usage_msg import ContextUsageMessage
+
+        await self._mount_and_scroll(
+            ContextUsageMessage(
+                stats=self.agent.stats,
+                config=self.config,
+                messages=self.agent.messages,
+                tool_manager=self.agent.tool_manager
+            )
+        )
 
     async def _reload_config(self) -> None:
         try:
@@ -1322,6 +1354,8 @@ class VibeApp(App):  # noqa: PLR0904
                 self._current_streaming_message = widget
                 await messages_area.mount(widget)
                 await widget.write_initial_content()
+                if self._auto_scroll:
+                    self.call_after_refresh(self._scroll_to_bottom)
         else:
             await self._finalize_current_streaming_message()
             await messages_area.mount(widget)

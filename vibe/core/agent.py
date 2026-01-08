@@ -104,6 +104,7 @@ class Agent:
         backend: BackendLike | None = None,
         enable_streaming: bool = False,
         orchestrator: Orchestrator | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Initialize the agent with configuration and mode."""
         self.config = config
@@ -148,7 +149,7 @@ class Agent:
 
         self.approval_callback: ApprovalCallback | None = None
 
-        self.session_id = str(uuid4())
+        self.session_id = session_id or str(uuid4())
 
         self.interaction_logger = InteractionLogger(
             config.session_logging,
@@ -316,8 +317,11 @@ class Agent:
 
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as e:
             status = SessionStatus.FAILED
+            self.messages.append(
+                LLMMessage(role=Role.assistant, content=f"**System Error**: {e}")
+            )
             raise
         finally:
             self._flush_new_messages()

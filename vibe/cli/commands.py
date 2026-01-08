@@ -16,35 +16,30 @@ class CommandRegistry:
         if excluded_commands is None:
             excluded_commands = []
         self.commands = {
-            "help": Command(
-                aliases=frozenset(["/help"]),
-                description="Show help message",
-                handler="_show_help",
-            ),
-            "config": Command(
-                aliases=frozenset(["/config", "/theme", "/model"]),
-                description="Edit config settings",
-                handler="_show_config",
-            ),
-            "reload": Command(
-                aliases=frozenset(["/reload"]),
-                description="Reload configuration from disk",
-                handler="_reload_config",
+            "admin": Command(
+                aliases=frozenset(["/admin"]),
+                description="Open Agent Admin (Pip-Boy)",
+                handler="_show_admin",
             ),
             "clear": Command(
                 aliases=frozenset(["/clear"]),
                 description="Clear conversation history",
                 handler="_clear_history",
             ),
-            "log": Command(
-                aliases=frozenset(["/log"]),
-                description="Show path to current interaction log file",
-                handler="_show_log_path",
-            ),
             "compact": Command(
                 aliases=frozenset(["/compact"]),
                 description="Compact conversation history by summarizing",
                 handler="_compact_history",
+            ),
+            "config": Command(
+                aliases=frozenset(["/config", "/theme", "/model"]),
+                description="Edit config settings",
+                handler="_show_config",
+            ),
+            "context": Command(
+                aliases=frozenset(["/context", "/tokens"]),
+                description="Show context usage visualization",
+                handler="_show_context",
             ),
             "exit": Command(
                 aliases=frozenset(["/exit"]),
@@ -52,40 +47,50 @@ class CommandRegistry:
                 handler="_exit_app",
                 exits=True,
             ),
-            "terminal-setup": Command(
-                aliases=frozenset(["/terminal-setup"]),
-                description="Configure Shift+Enter for newlines",
-                handler="_setup_terminal",
+            "help": Command(
+                aliases=frozenset(["/help"]),
+                description="Show help message",
+                handler="_show_help",
             ),
-            "scroll-up": Command(
-                aliases=frozenset(["/scroll-up"]),
-                description="Scroll chat up",
-                handler="_scroll_chat_up_command",
+            "log": Command(
+                aliases=frozenset(["/log"]),
+                description="Show path to current interaction log file",
+                handler="_show_log_path",
+            ),
+            "reload": Command(
+                aliases=frozenset(["/reload"]),
+                description="Reload configuration from disk",
+                handler="_reload_config",
+            ),
+            "scroll-bottom": Command(
+                aliases=frozenset(["/scroll-bottom"]),
+                description="Jump to bottom and follow new output",
+                handler="_scroll_chat_bottom_command",
             ),
             "scroll-down": Command(
                 aliases=frozenset(["/scroll-down"]),
                 description="Scroll chat down",
                 handler="_scroll_chat_down_command",
             ),
-            "scroll-page-up": Command(
-                aliases=frozenset(["/scroll-page-up"]),
-                description="Scroll chat up by one page",
-                handler="_scroll_chat_page_up_command",
-            ),
             "scroll-page-down": Command(
                 aliases=frozenset(["/scroll-page-down"]),
                 description="Scroll chat down by one page",
                 handler="_scroll_chat_page_down_command",
+            ),
+            "scroll-page-up": Command(
+                aliases=frozenset(["/scroll-page-up"]),
+                description="Scroll chat up by one page",
+                handler="_scroll_chat_page_up_command",
             ),
             "scroll-top": Command(
                 aliases=frozenset(["/scroll-top"]),
                 description="Jump to top of chat",
                 handler="_scroll_chat_top_command",
             ),
-            "scroll-bottom": Command(
-                aliases=frozenset(["/scroll-bottom"]),
-                description="Jump to bottom and follow new output",
-                handler="_scroll_chat_bottom_command",
+            "scroll-up": Command(
+                aliases=frozenset(["/scroll-up"]),
+                description="Scroll chat up",
+                handler="_scroll_chat_up_command",
             ),
             "status": Command(
                 aliases=frozenset(["/status"]),
@@ -97,10 +102,10 @@ class CommandRegistry:
                 description="List active sub-agents",
                 handler="_show_subagents",
             ),
-            "admin": Command(
-                aliases=frozenset(["/admin"]),
-                description="Open Agent Admin (Pip-Boy)",
-                handler="_show_admin",
+            "terminal-setup": Command(
+                aliases=frozenset(["/terminal-setup"]),
+                description="Configure Shift+Enter for newlines",
+                handler="_setup_terminal",
             ),
             "vibes": Command(
                 aliases=frozenset(["/vibes"]),

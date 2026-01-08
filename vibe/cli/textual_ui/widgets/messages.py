@@ -357,3 +357,40 @@ class WarningMessage(Static):
             if self._show_border:
                 yield ExpandingBorder(classes="warning-border")
             yield Static(self._message, markup=False, classes="warning-content")
+
+
+class ToolCallMessage(Static):
+    def __init__(self, tool_name: str) -> None:
+        super().__init__()
+        self.add_class("tool-call-message")
+        self._tool_name = tool_name
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(classes="tool-call-container"):
+            yield ExpandingBorder(classes="tool-call-border")
+            with Horizontal(classes="tool-call-header"):
+                yield Static(f"Using {self._tool_name}...", classes="tool-call-text")
+
+class ToolResultMessage(Static):
+    def __init__(self, tool_name: str, content: str, error: bool = False) -> None:
+        super().__init__()
+        self.add_class("tool-result-message")
+        if error:
+            self.add_class("error")
+        self._tool_name = tool_name
+        self._content = content
+        self._error = error
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="tool-result-container"):
+            with Horizontal(classes="tool-result-header"):
+                yield ExpandingBorder(classes="tool-result-border")
+                yield Static(f"{self._tool_name} result:", classes="tool-result-title")
+
+            with Horizontal(classes="tool-result-content-row"):
+                 yield ExpandingBorder(classes="tool-result-border-cont")
+                 # Use Markdown for content if it's text, or code block?
+                 # content might be JSON or text.
+                 # Let's use Markdown
+                 yield Markdown(self._content, classes="tool-result-content")
+

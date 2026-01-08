@@ -222,6 +222,7 @@ class ModelConfig(BaseModel):
     provider: str
     alias: str
     temperature: float = 0.2
+    max_tokens: int = 128000
     input_price: float = 0.0  # Price per million input tokens
     output_price: float = 0.0  # Price per million output tokens
 

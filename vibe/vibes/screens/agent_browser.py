@@ -4,7 +4,7 @@ from textual.widgets import Header, Footer, Static, Button, Tree, Label
 from textual.containers import Container, Horizontal, Vertical
 import asyncio
 from pathlib import Path
-from vibe.cli.textual_ui.screens.agent_chat import AgentChatScreen
+from vibe.vibes.screens.agent_chat import AgentChatScreen
 from vibe.core.orchestrator import SubAgent, SubAgentStatus
 
 class AgentBrowserScreen(Screen):
