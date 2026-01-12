@@ -13,7 +13,37 @@ from enum import StrEnum, auto
 from pathlib import Path
 from typing import IO
 from uuid import uuid4
-import fcntl
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(f: IO[str], exclusive: bool = True) -> None:
+        """Lock a file on Windows using msvcrt."""
+        f.seek(0)
+        msvcrt.locking(
+            f.fileno(),
+            msvcrt.LK_LOCK if exclusive else msvcrt.LK_RLCK,
+            1,
+        )
+
+    def _unlock_file(f: IO[str]) -> None:
+        """Unlock a file on Windows using msvcrt."""
+        try:
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl
+
+    def _lock_file(f: IO[str], exclusive: bool = True) -> None:
+        """Lock a file on Unix using fcntl."""
+        fcntl.flock(f, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+
+    def _unlock_file(f: IO[str]) -> None:
+        """Unlock a file on Unix using fcntl."""
+        fcntl.flock(f, fcntl.LOCK_UN)
 
 from vibe.core.config import VibeConfig
 from vibe.core.config import VibeConfig
@@ -157,11 +187,11 @@ class Orchestrator:
                 }
             }
             with open(self._state_file, "w") as f:
-                fcntl.flock(f, fcntl.LOCK_EX)
+                _lock_file(f, exclusive=True)
                 try:
                     json.dump(data, f, indent=2)
                 finally:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+                    _unlock_file(f)
         except Exception as e:
             logger.error(f"Failed to save orchestrator state: {e}")
 
@@ -171,11 +201,11 @@ class Orchestrator:
 
         try:
             with open(self._state_file, "r") as f:
-                fcntl.flock(f, fcntl.LOCK_SH)
+                _lock_file(f, exclusive=False)
                 try:
                     data = json.load(f)
                 finally:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+                    _unlock_file(f)
 
             for agent_id, agent_data in data.get("subagents", {}).items():
                 # Don't overwrite running local agents
@@ -495,7 +525,7 @@ class Orchestrator:
 
         current_pythonpath = env.get("PYTHONPATH", "")
         if current_pythonpath:
-            env["PYTHONPATH"] = f"{source_root}:{current_pythonpath}"
+            env["PYTHONPATH"] = f"{source_root}{os.pathsep}{current_pythonpath}"
         else:
             env["PYTHONPATH"] = str(source_root)
 
