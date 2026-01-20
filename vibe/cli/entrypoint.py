@@ -86,6 +86,12 @@ def parse_arguments() -> argparse.Namespace:
         help="Load agent configuration from ~/.vibe/agents/NAME.toml",
     )
     parser.add_argument("--setup", action="store_true", help="Setup API key and exit")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable debug logging for troubleshooting.",
+    )
 
     continuation_group = parser.add_mutually_exclusive_group()
     continuation_group.add_argument(
@@ -129,6 +135,19 @@ def check_and_resolve_trusted_folder() -> None:
 
 def main() -> None:
     args = parse_arguments()
+
+    # Set up debug logging if requested
+    if args.debug:
+        import logging
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+            ]
+        )
+        logging.getLogger("vibe").setLevel(logging.DEBUG)
+        logging.getLogger("vibe.core.skills.manager").setLevel(logging.DEBUG)
 
     is_interactive = args.prompt is None
     if is_interactive:

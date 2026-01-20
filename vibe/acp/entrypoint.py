@@ -16,6 +16,7 @@ sys.stdin.reconfigure(line_buffering=True)  # pyright: ignore[reportAttributeAcc
 @dataclass
 class Arguments:
     setup: bool
+    debug: bool
 
 
 def parse_arguments() -> Arguments:
@@ -24,17 +25,36 @@ def parse_arguments() -> Arguments:
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
     )
     parser.add_argument("--setup", action="store_true", help="Setup API key and exit")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable debug logging for troubleshooting.",
+    )
     args = parser.parse_args()
-    return Arguments(setup=args.setup)
+    return Arguments(setup=args.setup, debug=args.debug)
 
 
 def main() -> None:
+    # Set up debug logging if requested
+    args = parse_arguments()
+    if args.debug:
+        import logging
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+            ]
+        )
+        logging.getLogger("vibe").setLevel(logging.DEBUG)
+        logging.getLogger("vibe.core.skills.manager").setLevel(logging.DEBUG)
+
     unlock_config_paths()
 
     from vibe.acp.acp_agent import run_acp_server
     from vibe.setup.onboarding import run_onboarding
 
-    args = parse_arguments()
     if args.setup:
         run_onboarding()
         sys.exit(0)

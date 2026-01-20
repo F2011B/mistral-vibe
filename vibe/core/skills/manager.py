@@ -59,7 +59,10 @@ class SkillManager:
 
     def _discover_skills(self) -> dict[str, SkillInfo]:
         skills: dict[str, SkillInfo] = {}
+        logger.debug("Searching for skills in paths: %s", [str(p) for p in self._search_paths])
         for base in self._search_paths:
+            logger.debug("Checking skill search path: %s (exists: %s, is_dir: %s)", 
+                        str(base), base.exists(), base.is_dir())
             if not base.is_dir():
                 continue
             for name, info in self._discover_skills_in_dir(base).items():
@@ -72,18 +75,23 @@ class SkillManager:
                         info.skill_path,
                         skills[name].skill_path,
                     )
+        logger.debug("Discovered skills: %s", list(skills.keys()))
         return skills
 
     def _discover_skills_in_dir(self, base: Path) -> dict[str, SkillInfo]:
         skills: dict[str, SkillInfo] = {}
+        logger.debug("Scanning directory for skills: %s", str(base))
         for skill_dir in base.iterdir():
+            logger.debug("Found item: %s (is_dir: %s)", str(skill_dir), skill_dir.is_dir())
             if not skill_dir.is_dir():
                 continue
             skill_file = skill_dir / "SKILL.md"
+            logger.debug("Checking for SKILL.md: %s (exists: %s)", str(skill_file), skill_file.is_file())
             if not skill_file.is_file():
                 continue
             if (skill_info := self._try_load_skill(skill_file)) is not None:
                 skills[skill_info.name] = skill_info
+        logger.debug("Found %d skills in directory: %s", len(skills), str(base))
         return skills
 
     def _try_load_skill(self, skill_file: Path) -> SkillInfo | None:
