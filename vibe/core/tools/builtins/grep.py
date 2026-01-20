@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from enum import StrEnum, auto
+import fnmatch
+import os
 from pathlib import Path
+import re
 import shutil
 from typing import TYPE_CHECKING, ClassVar
 
@@ -24,6 +28,7 @@ if TYPE_CHECKING:
 class GrepBackend(StrEnum):
     RIPGREP = auto()
     GNU_GREP = auto()
+    PYTHON = auto()
 
 
 class GrepToolConfig(BaseToolConfig):
@@ -100,7 +105,8 @@ class Grep(
     ToolUIData[GrepArgs, GrepResult],
 ):
     description: ClassVar[str] = (
-        "Recursively search files for a regex pattern using ripgrep (rg) or grep. "
+        "Recursively search files for a regex pattern using ripgrep (rg), grep, "
+        "or a Python-based fallback for Windows compatibility. "
         "Respects .gitignore and .codeignore files by default when using ripgrep."
     )
 
@@ -109,10 +115,8 @@ class Grep(
             return GrepBackend.RIPGREP
         if shutil.which("grep"):
             return GrepBackend.GNU_GREP
-        raise ToolError(
-            "Neither ripgrep (rg) nor grep is installed. "
-            "Please install ripgrep: https://github.com/BurntSushi/ripgrep#installation"
-        )
+        # Fallback to Python implementation for Windows and other systems without grep
+        return GrepBackend.PYTHON
 
     async def run(self, args: GrepArgs) -> GrepResult:
         backend = self._detect_backend()
@@ -120,8 +124,12 @@ class Grep(
         self.state.search_history.append(args.pattern)
 
         exclude_patterns = self._collect_exclude_patterns()
-        cmd = self._build_command(args, exclude_patterns, backend)
-        stdout = await self._execute_search(cmd)
+        
+        if backend == GrepBackend.PYTHON:
+            stdout = await self._execute_python_grep(args, exclude_patterns)
+        else:
+            cmd = self._build_command(args, exclude_patterns, backend)
+            stdout = await self._execute_search(cmd)
 
         return self._parse_output(
             stdout, args.max_matches or self.config.default_max_matches
@@ -213,6 +221,87 @@ class Grep(
         cmd.extend(["-e", args.pattern, args.path])
 
         return cmd
+
+    async def _execute_python_grep(
+        self, args: GrepArgs, exclude_patterns: list[str]
+    ) -> str:
+        """Execute grep using pure Python implementation for Windows compatibility."""
+        
+        max_matches = args.max_matches or self.config.default_max_matches
+        pattern = args.pattern
+        search_path = Path(args.path).expanduser()
+        if not search_path.is_absolute():
+            search_path = self.config.effective_workdir / search_path
+        
+        # Compile regex pattern
+        try:
+            if args.pattern.islower():
+                regex = re.compile(pattern, re.IGNORECASE)
+            else:
+                regex = re.compile(pattern)
+        except re.error as e:
+            raise ToolError(f"Invalid regex pattern: {e}")
+        
+        # Collect files to search
+        files_to_search = []
+        for root, dirs, files in os.walk(search_path):
+            # Filter out excluded directories
+            dirs[:] = [d for d in dirs if not self._should_exclude_dir(
+                Path(root) / d, exclude_patterns
+            )]
+            
+            # Add files that aren't excluded
+            for file in files:
+                file_path = Path(root) / file
+                if not self._should_exclude_file(file_path, exclude_patterns):
+                    files_to_search.append(file_path)
+        
+        # Search files
+        matches = []
+        for file_path in files_to_search:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_number, line in enumerate(f, 1):
+                        if regex.search(line):
+                            matches.append(f"{file_path}:{line_number}:{line.rstrip()}")
+                            if len(matches) >= max_matches + 1:
+                                break
+                if len(matches) >= max_matches + 1:
+                    break
+            except (OSError, UnicodeDecodeError):
+                # Skip files that can't be read
+                continue
+        
+        return "\n".join(matches)
+
+    def _should_exclude_dir(self, path: Path, exclude_patterns: list[str]) -> bool:
+        """Check if a directory should be excluded based on patterns."""
+        for pattern in exclude_patterns:
+            if pattern.endswith("/"):
+                # Directory pattern
+                dir_pattern = pattern.rstrip("/")
+                if self._matches_pattern(str(path), dir_pattern):
+                    return True
+        return False
+
+    def _should_exclude_file(self, path: Path, exclude_patterns: list[str]) -> bool:
+        """Check if a file should be excluded based on patterns."""
+        for pattern in exclude_patterns:
+            if not pattern.endswith("/"):
+                # File pattern
+                if self._matches_pattern(str(path), pattern):
+                    return True
+        return False
+
+    def _matches_pattern(self, path: str, pattern: str) -> bool:
+        """Check if path matches the given glob pattern."""
+        # Handle both glob patterns and exact matches
+        if "*" in pattern or "?" in pattern or "[" in pattern:
+            return fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(
+                os.path.basename(path), pattern
+            )
+        else:
+            return pattern in path
 
     async def _execute_search(self, cmd: list[str]) -> str:
         try:
