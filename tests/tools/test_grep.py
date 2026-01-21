@@ -53,13 +53,10 @@ def test_falls_back_to_gnu_grep(grep, monkeypatch):
         assert grep._detect_backend() == GrepBackend.GNU_GREP
 
 
-def test_raises_error_if_no_grep_available(grep, monkeypatch):
+def test_falls_back_to_python_when_no_grep_available(grep, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda cmd: None)
 
-    with pytest.raises(ToolError) as err:
-        grep._detect_backend()
-
-    assert "Neither ripgrep (rg) nor grep is installed" in str(err.value)
+    assert grep._detect_backend() == GrepBackend.PYTHON
 
 
 @pytest.mark.asyncio
@@ -345,3 +342,103 @@ class TestRipgrepBackend:
         )
         assert "included.py" in result_without_ignore.matches
         assert "ignored_by_rg/file.py" in result_without_ignore.matches
+
+
+def _no_grep_backends_available():
+    """Check if neither rg nor grep are available, so Python backend will be used."""
+    return not (shutil.which("rg") or shutil.which("grep"))
+
+
+@pytest.mark.skipif(not _no_grep_backends_available(), reason="Python grep only tested when no other backends available")
+class TestPythonGrepBackend:
+    @pytest.mark.asyncio
+    async def test_finds_pattern_in_file(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("def hello():\n    print('world')\n")
+
+        result = await grep.run(GrepArgs(pattern="hello"))
+
+        assert result.match_count == 1
+        assert "hello" in result.matches
+        assert "test.py" in result.matches
+
+    @pytest.mark.asyncio
+    async def test_finds_multiple_matches(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("foo\nbar\nfoo\nbaz\nfoo\n")
+
+        result = await grep.run(GrepArgs(pattern="foo"))
+
+        assert result.match_count == 3
+        assert result.matches.count("foo") == 3
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_no_matches(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("def hello():\n    pass\n")
+
+        result = await grep.run(GrepArgs(pattern="nonexistent"))
+
+        assert result.match_count == 0
+        assert result.matches == ""
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_for_lowercase_pattern(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("Hello\nHELLO\nhello\n")
+
+        result = await grep.run(GrepArgs(pattern="hello"))
+
+        assert result.match_count == 3
+
+    @pytest.mark.asyncio
+    async def test_case_sensitive_for_mixed_case_pattern(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("Hello\nHELLO\nhello\n")
+
+        result = await grep.run(GrepArgs(pattern="Hello"))
+
+        assert result.match_count == 1
+
+    @pytest.mark.asyncio
+    async def test_respects_exclude_patterns(self, grep, tmp_path):
+        (tmp_path / "included.py").write_text("match\n")
+        node_modules = tmp_path / "node_modules"
+        node_modules.mkdir()
+        (node_modules / "excluded.js").write_text("match\n")
+
+        result = await grep.run(GrepArgs(pattern="match"))
+
+        assert "included.py" in result.matches
+        assert "excluded.js" not in result.matches
+
+    @pytest.mark.asyncio
+    async def test_searches_in_specific_path(self, grep, tmp_path):
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "test.py").write_text("match here\n")
+        (tmp_path / "other.py").write_text("match here too\n")
+
+        result = await grep.run(GrepArgs(pattern="match", path="subdir"))
+
+        assert result.match_count == 1
+        assert "other.py" not in result.matches
+
+    @pytest.mark.asyncio
+    async def test_respects_vibeignore_file(self, grep, tmp_path):
+        (tmp_path / ".vibeignore").write_text("custom_dir/\n*.tmp\n")
+        custom_dir = tmp_path / "custom_dir"
+        custom_dir.mkdir()
+        (custom_dir / "excluded.py").write_text("match\n")
+        (tmp_path / "excluded.tmp").write_text("match\n")
+        (tmp_path / "included.py").write_text("match\n")
+
+        result = await grep.run(GrepArgs(pattern="match"))
+
+        assert "included.py" in result.matches
+        assert "excluded.py" not in result.matches
+        assert "excluded.tmp" not in result.matches
+
+    @pytest.mark.asyncio
+    async def test_truncates_to_max_matches(self, grep, tmp_path):
+        (tmp_path / "test.py").write_text("\n".join(f"line {i}" for i in range(200)))
+
+        result = await grep.run(GrepArgs(pattern="line", max_matches=50))
+
+        assert result.match_count == 50
+        assert result.was_truncated
