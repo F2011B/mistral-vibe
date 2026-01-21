@@ -50,6 +50,130 @@ Setup and onboarding functionality:
 - **`onboarding/`**: Initial setup screens and configuration.
 - **`trusted_folders/`**: Folder trust management for security.
 
+## Deep Dive: Core Architecture
+
+### Agent System
+
+The agent system is the heart of Mistral Vibe, implementing a sophisticated conversation pipeline:
+
+```mermaid
+flowchart TD
+    subgraph Agent Core
+        direction TB
+        UserInput[User Input] -->|1. Process| MiddlewarePipeline
+        MiddlewarePipeline -->|2. Validate| ToolManager
+        MiddlewarePipeline -->|3. Prepare| LLMBackend
+        LLMBackend -->|4. Generate| Response
+        Response -->|5. Execute| ToolManager
+        ToolManager -->|6. Return| Results
+        Results -->|7. Format| MiddlewarePipeline
+        MiddlewarePipeline -->|8. Output| UserOutput[User Output]
+    end
+```
+
+**Key Components:**
+- **Middleware Pipeline**: Chain of processors that validate, transform, and monitor conversations
+- **Tool Manager**: Handles tool discovery, permission checking, and execution
+- **LLM Backend**: Abstract interface to language models with multiple provider support
+- **State Management**: Tracks conversation history, statistics, and session data
+
+### Middleware Pipeline
+
+The middleware system implements a chain-of-responsibility pattern with the following middleware components:
+
+1. **TurnLimitMiddleware**: Enforces maximum conversation turns
+2. **PriceLimitMiddleware**: Monitors and limits API costs
+3. **PlanModeMiddleware**: Handles different agent modes (default, compact, etc.)
+4. **ContextWarningMiddleware**: Validates conversation context
+5. **AutoCompactMiddleware**: Automatically compacts long conversations
+
+Each middleware implements the `ConversationMiddleware` protocol with `before_turn()` and `after_turn()` methods.
+
+### Tool System Architecture
+
+```mermaid
+classDiagram
+    class BaseTool {
+        +description: str
+        +run(args) GrepResult
+        +get_call_display()
+        +get_result_display()
+    }
+    
+    class ToolManager {
+        -tools: dict[str, BaseTool]
+        +get_tool(name)
+        +get_available_tools()
+        +execute_tool()
+    }
+    
+    class GrepTool {
+        +_execute_python_grep()
+        +_execute_search()
+        +_detect_backend()
+    }
+    
+    BaseTool <|-- GrepTool
+    BaseTool <|-- BashTool
+    BaseTool <|-- ReadFileTool
+    ToolManager --> BaseTool
+```
+
+**Key Features:**
+- **Multi-backend support**: Tools can have multiple implementations (e.g., ripgrep, GNU grep, Python fallback)
+- **Permission system**: Three-tier permission model (ALWAYS, ASK, NEVER)
+- **State management**: Each tool maintains its own state
+- **UI integration**: Tools provide display methods for CLI/ACP interfaces
+
+### LLM Backend System
+
+```mermaid
+flowchart TD
+    subgraph LLM Backend
+        direction TB
+        Agent -->|Request| BackendFactory
+        BackendFactory -->|Create| MistralBackend
+        BackendFactory -->|Create| GenericBackend
+        MistralBackend -->|Call API| MistralAI
+        GenericBackend -->|Call API| HTTPX
+        MistralAI -->|Response| MistralMapper
+        HTTPX -->|Response| GenericMapper
+        MistralMapper -->|Convert| LLMMessage
+        GenericMapper -->|Convert| LLMMessage
+        LLMMessage -->|Return| Agent
+    end
+```
+
+**Backend Features:**
+- **Provider abstraction**: Unified interface for different LLM providers
+- **Message mapping**: Converts between internal and provider-specific message formats
+- **Streaming support**: Handles both streaming and non-streaming responses
+- **Error handling**: Comprehensive error handling and retry logic
+
+### Configuration System
+
+The configuration system uses a layered approach:
+
+```mermaid
+flowchart TD
+    subgraph Configuration Layers
+        direction TB
+        Environment[Environment Variables] -->|Load| DotEnv
+        DotEnv -->|Merge| TOMLConfig
+        TOMLConfig -->|Validate| PydanticSettings
+        PydanticSettings -->|Resolve| RuntimeConfig
+        RuntimeConfig -->|Inject| Agent
+        RuntimeConfig -->|Inject| LLMBackend
+        RuntimeConfig -->|Inject| ToolManager
+    end
+```
+
+**Configuration Features:**
+- **Multi-source**: Combines environment variables, .env files, and TOML configuration
+- **Type-safe**: Uses Pydantic for validation and type safety
+- **Dynamic**: Supports runtime configuration changes
+- **Hierarchical**: Nested configuration with sensible defaults
+
 ## Key Files
 
 ### Entry Points
@@ -115,6 +239,8 @@ flowchart TD
 4. **Configurable**: Extensive configuration options via `config.toml`
 5. **Security**: Folder trust system to prevent unauthorized operations
 6. **Modern CLI**: Rich text UI with autocompletion and command history
+7. **Cross-platform**: Windows, macOS, and Linux support with appropriate fallbacks
+8. **Multi-backend**: Tools support multiple implementations with automatic fallback
 
 ## Technology Stack
 
@@ -124,6 +250,8 @@ flowchart TD
 - **Agent Client Protocol**: External integration protocol
 - **Mistral AI Models**: Language model backend
 - **Ruff/Pyright**: Code quality and type checking
+- **HTTPX**: HTTP client for API communications
+- **Pydantic Settings**: Configuration management
 
 ## Installation and Execution
 
@@ -133,3 +261,34 @@ The project provides two main entry points:
 2. **`vibe-acp`**: ACP server for external integrations
 
 Both are configured in `pyproject.toml` under `[project.scripts]`.
+
+## Advanced Features
+
+### Windows Compatibility
+
+The system includes comprehensive Windows support:
+
+- **Python grep fallback**: Full grep functionality without external tools
+- **Path handling**: Cross-platform path management using `pathlib`
+- **Error handling**: Graceful handling of Windows-specific issues
+
+### Performance Optimization
+
+- **Async I/O**: Asynchronous operations for better responsiveness
+- **Caching**: Caching of tool results and configuration
+- **Streaming**: Streaming support for large responses
+- **Memory management**: Efficient memory usage for long conversations
+
+### Security Features
+
+- **Folder trust system**: Prevents unauthorized file operations
+- **Permission system**: Fine-grained control over tool usage
+- **Input validation**: Comprehensive validation of all inputs
+- **Error isolation**: Sandboxing of tool operations
+
+### Extensibility
+
+- **Plugin architecture**: Easy to add new tools and features
+- **Configuration-driven**: Behavior controlled through configuration
+- **Event system**: Hooks for custom behavior injection
+- **Middleware**: Extensible processing pipeline
