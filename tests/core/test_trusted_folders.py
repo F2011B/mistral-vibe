@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tomllib
 from unittest.mock import patch
@@ -85,7 +86,8 @@ class TestTrustedFoldersManager:
         assert manager.is_trusted(tmp_path) is True
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert str(tmp_path.resolve()) in data["trusted"]
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert expected in data["trusted"]
 
     def test_add_trusted_removes_path_from_untrusted(self, tmp_path: Path) -> None:
         trusted_file = TRUSTED_FOLDERS_FILE.path
@@ -99,8 +101,9 @@ class TestTrustedFoldersManager:
 
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert str(tmp_path.resolve()) not in data["untrusted"]
-        assert str(tmp_path.resolve()) in data["trusted"]
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert expected not in data["untrusted"]
+        assert expected in data["trusted"]
 
     def test_add_trusted_idempotent(self, tmp_path: Path) -> None:
         trusted_file = TRUSTED_FOLDERS_FILE.path
@@ -113,7 +116,8 @@ class TestTrustedFoldersManager:
         assert manager.is_trusted(tmp_path) is True
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert data["trusted"].count(str(tmp_path.resolve())) == 1
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert data["trusted"].count(expected) == 1
 
     def test_add_untrusted_adds_path_to_untrusted_list(self, tmp_path: Path) -> None:
         trusted_file = TRUSTED_FOLDERS_FILE.path
@@ -123,7 +127,8 @@ class TestTrustedFoldersManager:
         assert manager.is_trusted(tmp_path) is False
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert str(tmp_path.resolve()) in data["untrusted"]
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert expected in data["untrusted"]
 
     def test_add_untrusted_removes_path_from_trusted(self, tmp_path: Path) -> None:
         trusted_file = TRUSTED_FOLDERS_FILE.path
@@ -137,8 +142,9 @@ class TestTrustedFoldersManager:
 
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert str(tmp_path.resolve()) not in data["trusted"]
-        assert str(tmp_path.resolve()) in data["untrusted"]
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert expected not in data["trusted"]
+        assert expected in data["untrusted"]
 
     def test_add_untrusted_idempotent(self, tmp_path: Path) -> None:
         trusted_file = TRUSTED_FOLDERS_FILE.path
@@ -151,7 +157,8 @@ class TestTrustedFoldersManager:
         assert manager.is_trusted(tmp_path) is False
         with trusted_file.open("rb") as f:
             data = tomllib.load(f)
-        assert data["untrusted"].count(str(tmp_path.resolve())) == 1
+        expected = os.path.normcase(str(tmp_path.resolve()))
+        assert data["untrusted"].count(expected) == 1
 
     def test_persistence_across_instances(self, tmp_path: Path) -> None:
         manager1 = TrustedFoldersManager()

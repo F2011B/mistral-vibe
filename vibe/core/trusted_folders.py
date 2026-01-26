@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import tomllib
 
@@ -27,7 +28,17 @@ class TrustedFoldersManager:
         self._load()
 
     def _normalize_path(self, path: Path) -> str:
-        return str(path.expanduser().resolve())
+        expanded = path.expanduser()
+        try:
+            expanded = expanded.resolve()
+        except OSError:
+            pass
+        return os.path.normcase(os.path.normpath(str(expanded)))
+
+    def _normalize_entries(self, entries: list[str]) -> list[str]:
+        if not entries:
+            return []
+        return [self._normalize_path(Path(str(entry))) for entry in entries]
 
     def _load(self) -> None:
         if not self._file_path.is_file():
@@ -39,8 +50,8 @@ class TrustedFoldersManager:
         try:
             with self._file_path.open("rb") as f:
                 data = tomllib.load(f)
-            self._trusted = list(data.get("trusted", []))
-            self._untrusted = list(data.get("untrusted", []))
+            self._trusted = self._normalize_entries(list(data.get("trusted", [])))
+            self._untrusted = self._normalize_entries(list(data.get("untrusted", [])))
         except (OSError, tomllib.TOMLDecodeError):
             self._trusted = []
             self._untrusted = []
