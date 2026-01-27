@@ -20,6 +20,7 @@ from vibe.core.tools.base import (
     ToolPermission,
 )
 from vibe.core.tools.ui import ToolCallDisplay, ToolResultDisplay, ToolUIData
+from vibe.core.utils import is_windows
 
 if TYPE_CHECKING:
     from vibe.core.types import ToolCallEvent, ToolResultEvent
@@ -113,9 +114,12 @@ class Grep(
     def _detect_backend(self) -> GrepBackend:
         if shutil.which("rg"):
             return GrepBackend.RIPGREP
+        if is_windows():
+            # Avoid GNU grep on Windows (often MSYS/Git shim) and use the built-in fallback.
+            return GrepBackend.PYTHON
         if shutil.which("grep"):
             return GrepBackend.GNU_GREP
-        # Fallback to Python implementation for Windows and other systems without grep
+        # Fallback to Python implementation for other systems without grep
         return GrepBackend.PYTHON
 
     async def run(self, args: GrepArgs) -> GrepResult:
@@ -124,7 +128,7 @@ class Grep(
         self.state.search_history.append(args.pattern)
 
         exclude_patterns = self._collect_exclude_patterns()
-        
+
         if backend == GrepBackend.PYTHON:
             stdout = await self._execute_python_grep(args, exclude_patterns)
         else:

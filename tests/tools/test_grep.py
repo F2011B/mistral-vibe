@@ -12,6 +12,7 @@ from vibe.core.tools.builtins.grep import (
     GrepState,
     GrepToolConfig,
 )
+from vibe.core.utils import is_windows
 
 
 @pytest.fixture
@@ -50,7 +51,23 @@ def test_falls_back_to_gnu_grep(grep, monkeypatch):
     monkeypatch.setattr("shutil.which", mock_which)
 
     if shutil.which("grep"):
-        assert grep._detect_backend() == GrepBackend.GNU_GREP
+        expected = GrepBackend.PYTHON if is_windows() else GrepBackend.GNU_GREP
+        assert grep._detect_backend() == expected
+
+
+def test_windows_prefers_python_backend_over_gnu_grep(grep, monkeypatch):
+    monkeypatch.setattr("vibe.core.tools.builtins.grep.is_windows", lambda: True)
+
+    def mock_which(cmd):
+        if cmd == "rg":
+            return None
+        if cmd == "grep":
+            return "/usr/bin/grep"
+        return None
+
+    monkeypatch.setattr("shutil.which", mock_which)
+
+    assert grep._detect_backend() == GrepBackend.PYTHON
 
 
 def test_falls_back_to_python_when_no_grep_available(grep, monkeypatch):
